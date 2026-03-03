@@ -160,6 +160,13 @@ export default function QueryOptimizerPage() {
     return detectExtractableFragments(ast);
   }, [ast]);
 
+  const existingFragmentNames = useMemo(() => {
+    if (!ast) return [] as string[];
+    return ast.definitions
+      .filter((d): d is import("graphql").FragmentDefinitionNode => d.kind === Kind.FRAGMENT_DEFINITION)
+      .map((d) => d.name.value);
+  }, [ast]);
+
   const paginationIssues = useMemo(() => {
     return detectUnboundedConnections(tree);
   }, [tree]);
@@ -358,6 +365,7 @@ export default function QueryOptimizerPage() {
           {fragmentSuggestions.length > 0 && (
             <FragmentExtractionCard
               suggestions={fragmentSuggestions}
+              existingFragmentNames={existingFragmentNames}
               onExtract={handleExtractFragments}
             />
           )}

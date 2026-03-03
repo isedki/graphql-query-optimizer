@@ -1418,136 +1418,223 @@ export interface FragmentSuggestion {
 export function detectExtractableFragments(
   ast: DocumentNode
 ): FragmentSuggestion[] {
-  const fragmentMap = buildFragmentMap(ast);
+  const existingFragmentNames = new Set<string>();
+  for (const def of ast.definitions) {
+    if (def.kind === Kind.FRAGMENT_DEFINITION) {
+      existingFragmentNames.add(def.name.value);
+    }
+  }
 
-  interface SelectionSetFingerprint {
-    fields: string[];
+  interface FieldSig {
+    name: string;
+    hasArgs: boolean;
+    argsFingerprint: string;
+  }
+
+  interface SSFingerprint {
+    fieldSigs: FieldSig[];
     fingerprint: string;
     parentPath: string;
-    parentType?: string;
+    typeName?: string;
     charLength: number;
   }
 
-  const fingerprints: SelectionSetFingerprint[] = [];
+  function fieldArgFp(field: FieldNode): string {
+    if (!field.arguments || field.arguments.length === 0) return "";
+    return field.arguments.map((a) => `${a.name.value}:${print(a.value)}`).sort().join(";");
+  }
 
-  function walkForFingerprints(
+  const collected: SSFingerprint[] = [];
+
+  function walkSelections(
     selectionSet: SelectionSetNode | undefined,
     pathStack: string[],
-    parentType: string | undefined,
-    visited: Set<string>
+    typeName: string | undefined,
   ) {
     if (!selectionSet) return;
 
-    const directFields: string[] = [];
+    const leafFields: FieldSig[] = [];
     let charLen = 0;
 
     for (const sel of selectionSet.selections) {
-      if (sel.kind === Kind.FIELD) {
-        directFields.push(sel.name.value);
-        charLen += sel.name.value.length + 2;
+      if (sel.kind === Kind.FIELD && !sel.selectionSet) {
+        const argFp = fieldArgFp(sel);
+        leafFields.push({
+          name: sel.name.value,
+          hasArgs: !!sel.arguments?.length,
+          argsFingerprint: argFp,
+        });
+        charLen += sel.name.value.length + (argFp ? argFp.length : 0) + 2;
       }
     }
 
-    if (directFields.length >= 3) {
-      const sorted = Array.from(directFields).sort();
-      fingerprints.push({
-        fields: sorted,
-        fingerprint: sorted.join(","),
+    const dedupedFields = new Map<string, FieldSig>();
+    for (const f of leafFields) {
+      const key = f.argsFingerprint ? `${f.name}(${f.argsFingerprint})` : f.name;
+      dedupedFields.set(key, f);
+    }
+
+    if (dedupedFields.size >= 3) {
+      const sorted = Array.from(dedupedFields.values()).sort((a, b) => a.name.localeCompare(b.name));
+      const fp = sorted.map((f) => f.argsFingerprint ? `${f.name}(${f.argsFingerprint})` : f.name).join(",");
+      collected.push({
+        fieldSigs: sorted,
+        fingerprint: fp,
         parentPath: pathStack.join(".") || "(root)",
-        parentType: parentType,
+        typeName,
         charLength: charLen,
       });
     }
 
     for (const sel of selectionSet.selections) {
-      if (sel.kind === Kind.FIELD) {
-        const fieldName = sel.name.value;
-        if (sel.selectionSet) {
-          walkForFingerprints(
-            sel.selectionSet,
-            [...pathStack, fieldName],
-            fieldName,
-            visited
-          );
-        }
-      } else if (sel.kind === Kind.INLINE_FRAGMENT) {
-        const typeName = (sel as InlineFragmentNode).typeCondition?.name.value;
-        walkForFingerprints(
+      if (sel.kind === Kind.FIELD && sel.selectionSet) {
+        walkSelections(
           sel.selectionSet,
-          pathStack,
-          typeName || parentType,
-          visited
+          [...pathStack, sel.alias?.value || sel.name.value],
+          typeName,
         );
-      } else if (sel.kind === Kind.FRAGMENT_SPREAD) {
-        const fragName = sel.name.value;
-        if (visited.has(fragName)) continue;
-        const fragDef = fragmentMap.get(fragName);
-        if (!fragDef) continue;
-        const next = new Set(visited);
-        next.add(fragName);
-        walkForFingerprints(
-          fragDef.selectionSet,
-          pathStack,
-          fragDef.typeCondition.name.value,
-          next
-        );
+      } else if (sel.kind === Kind.INLINE_FRAGMENT) {
+        const tn = (sel as InlineFragmentNode).typeCondition?.name.value;
+        walkSelections(sel.selectionSet, pathStack, tn || typeName);
       }
     }
   }
 
   for (const def of ast.definitions) {
+    if (def.kind === Kind.FRAGMENT_DEFINITION) {
+      walkSelections(
+        def.selectionSet,
+        [def.name.value],
+        def.typeCondition.name.value,
+      );
+    }
     if (def.kind === Kind.OPERATION_DEFINITION) {
-      walkForFingerprints(def.selectionSet, [], undefined, new Set());
+      walkSelections(def.selectionSet, [def.name?.value || "query"], undefined);
     }
   }
 
-  const groups = new Map<
-    string,
-    { fields: string[]; charLength: number; occurrences: SelectionSetFingerprint[] }
-  >();
-  for (const fp of fingerprints) {
-    const existing = groups.get(fp.fingerprint);
-    if (existing) {
-      existing.occurrences.push(fp);
-    } else {
-      groups.set(fp.fingerprint, {
-        fields: fp.fields,
-        charLength: fp.charLength,
-        occurrences: [fp],
-      });
+  // Build fingerprint of each existing fragment's top-level leaf fields
+  const existingFragFp = new Map<string, string>();
+  for (const def of ast.definitions) {
+    if (def.kind === Kind.FRAGMENT_DEFINITION) {
+      const leaves: string[] = [];
+      for (const sel of def.selectionSet.selections) {
+        if (sel.kind === Kind.FIELD && !sel.selectionSet) {
+          leaves.push(sel.name.value);
+        }
+      }
+      if (leaves.length > 0) {
+        existingFragFp.set(def.name.value, Array.from(leaves).sort().join(","));
+      }
     }
   }
+
+  const groups = new Map<string, { sigs: FieldSig[]; charLen: number; occs: SSFingerprint[] }>();
+  for (const item of collected) {
+    const existing = groups.get(item.fingerprint);
+    if (existing) {
+      existing.occs.push(item);
+    } else {
+      groups.set(item.fingerprint, { sigs: item.fieldSigs, charLen: item.charLength, occs: [item] });
+    }
+  }
+
+  // Sort groups by occurrence count descending so most-used patterns get the cleanest names
+  const sortedGroups = Array.from(groups.values()).sort((a, b) => b.occs.length - a.occs.length);
 
   const results: FragmentSuggestion[] = [];
   let idx = 0;
+  const usedNames = new Set<string>();
+  const MIN_SAVINGS = 20;
 
-  groups.forEach((group) => {
-    if (group.occurrences.length < 2) return;
+  function inferName(fieldNames: string[], hasArgs: boolean): string {
+    const nameSet = new Set(fieldNames.map((n) => n.toLowerCase()));
+    const isImageLike = nameSet.has("url") && (nameSet.has("alttext") || nameSet.has("width") || nameSet.has("height"));
+    const isColorLike = nameSet.has("hex") || (nameSet.has("r") && nameSet.has("g") && nameSet.has("b"));
+    const isCtaLike = nameSet.has("buttontext") && nameSet.has("url");
+    const isRichText = nameSet.has("html") && nameSet.size <= 3;
 
-    const firstOcc = group.occurrences[0];
-    const typeName = firstOcc.parentType || "Shared";
-    const baseName = typeName.charAt(0).toUpperCase() + typeName.slice(1);
-    const suggestedName = `${baseName}Fields`;
+    if (isImageLike && hasArgs) return "TransformedImage";
+    if (isImageLike) return "ImageAsset";
+    if (isColorLike) return "ColorValue";
+    if (isCtaLike) return "CtaButton";
+    if (isRichText) return "RichContent";
+    return "";
+  }
 
-    const fragmentDefOverhead = `fragment ${suggestedName} on ${typeName} { ${group.fields.join(" ")} }`.length;
-    const spreadSize = `...${suggestedName}`.length;
-    const savings =
-      group.occurrences.length * group.charLength -
-      (spreadSize * group.occurrences.length + fragmentDefOverhead);
+  for (const group of sortedGroups) {
+    // Filter out occurrences that are the root of an existing fragment with the same fields
+    const simpleFieldFp = group.sigs.map((s) => s.name).sort().join(",");
+    const occs = group.occs.filter((occ) => {
+      // If this occurrence IS the body of an existing named fragment with matching fields, skip it
+      const pathParts = occ.parentPath.split(".");
+      if (pathParts.length === 1 && existingFragmentNames.has(pathParts[0])) {
+        const fragFp = existingFragFp.get(pathParts[0]);
+        if (fragFp === simpleFieldFp) return false;
+      }
+      return true;
+    });
 
-    if (savings <= 0) return;
+    if (occs.length < 2) continue;
+
+    const fieldNames = group.sigs.map((s) => s.name);
+    const hasArgs = group.sigs.some((s) => s.hasArgs);
+
+    // Check if an existing named fragment already covers this exact field set
+    let existingMatch: string | undefined;
+    existingFragFp.forEach((fp, fragName) => {
+      if (fp === simpleFieldFp) existingMatch = fragName;
+    });
+
+    let suggestedName: string;
+    if (existingMatch) {
+      // Suggest reusing the existing fragment
+      suggestedName = existingMatch;
+    } else {
+      let baseName = inferName(fieldNames, hasArgs);
+      if (!baseName) {
+        const firstType = occs.find((o) => o.typeName)?.typeName;
+        if (firstType && !existingFragmentNames.has(`${firstType}Fields`)) {
+          baseName = firstType;
+        } else {
+          baseName = fieldNames.slice(0, 2).map((n) => n.charAt(0).toUpperCase() + n.slice(1)).join("");
+        }
+      }
+
+      suggestedName = `${baseName}Fields`;
+      let attempt = 0;
+      while (usedNames.has(suggestedName) || existingFragmentNames.has(suggestedName)) {
+        attempt++;
+        suggestedName = `${baseName}Fields${attempt}`;
+      }
+    }
+    usedNames.add(suggestedName);
+
+    const fieldListLen = fieldNames.join(" ").length + fieldNames.length * 2;
+    const argsOverhead = hasArgs
+      ? group.sigs.reduce((s, f) => s + (f.argsFingerprint ? f.argsFingerprint.length + 2 : 0), 0)
+      : 0;
+    const perOccSize = fieldListLen + argsOverhead;
+    const firstType = occs.find((o) => o.typeName)?.typeName || "Type";
+    const fragDefOverhead = existingMatch
+      ? 0 // no new fragment definition needed
+      : `fragment ${suggestedName} on ${firstType} {  }`.length + perOccSize;
+    const spreadCost = `...${suggestedName}`.length;
+    const savings = occs.length * perOccSize - (occs.length * spreadCost + fragDefOverhead);
+
+    if (savings < MIN_SAVINGS) continue;
 
     results.push({
       id: `frag-${idx++}`,
       suggestedName,
-      fields: group.fields,
-      occurrences: group.occurrences.map((o) => ({
+      fields: fieldNames,
+      occurrences: occs.map((o) => ({
         parentPath: o.parentPath,
-        parentType: o.parentType,
+        parentType: o.typeName,
       })),
       estimatedSavings: savings,
     });
-  });
+  }
 
   return results.sort((a, b) => b.estimatedSavings - a.estimatedSavings);
 }
@@ -1559,35 +1646,51 @@ export function applyFragmentExtraction(
   if (suggestions.length === 0) return query;
 
   const ast = parse(query);
-  const targetSets = new Map<string, string>();
+
+  function leafFieldFingerprint(node: SelectionSetNode): string {
+    const leafNames: string[] = [];
+    for (const sel of node.selections) {
+      if (sel.kind === Kind.FIELD && !sel.selectionSet) {
+        let sig = sel.name.value;
+        if (sel.arguments && sel.arguments.length > 0) {
+          const argStr = sel.arguments.map((a) => `${a.name.value}:${print(a.value)}`).sort().join(";");
+          sig += `(${argStr})`;
+        }
+        leafNames.push(sig);
+      }
+    }
+    return leafNames.sort().join(",");
+  }
+
+  const targetFingerprints = new Map<string, string>();
   for (const s of suggestions) {
     const key = Array.from(s.fields).sort().join(",");
-    targetSets.set(key, s.suggestedName);
+    targetFingerprints.set(key, s.suggestedName);
   }
 
   const edited = visit(ast, {
     SelectionSet: {
       enter(node) {
-        const directFields: string[] = [];
-        for (const sel of node.selections) {
-          if (sel.kind === Kind.FIELD) {
-            directFields.push(sel.name.value);
-          }
-        }
-        if (directFields.length < 3) return undefined;
+        const fp = leafFieldFingerprint(node);
+        if (!fp) return undefined;
 
-        const key = Array.from(directFields).sort().join(",");
-        const fragName = targetSets.get(key);
+        const simpleFp = fp.replace(/\([^)]*\)/g, "");
+        let fragName: string | undefined;
+        targetFingerprints.forEach((name, key) => {
+          if (!fragName && (key === fp || key === simpleFp)) {
+            fragName = name;
+          }
+        });
         if (!fragName) return undefined;
 
-        const nonFieldSelections = node.selections.filter(
+        const kept = node.selections.filter(
           (s) => s.kind !== Kind.FIELD || s.selectionSet
         );
 
         return {
           ...node,
           selections: [
-            ...nonFieldSelections,
+            ...kept,
             {
               kind: Kind.FRAGMENT_SPREAD,
               name: { kind: Kind.NAME, value: fragName },
