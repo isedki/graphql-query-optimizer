@@ -1402,3 +1402,328 @@ export function removeFieldsByName(
 
   return print(edited);
 }
+
+// ---------------------------------------------------------------------------
+// Fragment Extraction
+// ---------------------------------------------------------------------------
+
+export interface FragmentSuggestion {
+  id: string;
+  suggestedName: string;
+  fields: string[];
+  occurrences: { parentPath: string; parentType?: string }[];
+  estimatedSavings: number;
+}
+
+export function detectExtractableFragments(
+  ast: DocumentNode
+): FragmentSuggestion[] {
+  const fragmentMap = buildFragmentMap(ast);
+
+  interface SelectionSetFingerprint {
+    fields: string[];
+    fingerprint: string;
+    parentPath: string;
+    parentType?: string;
+    charLength: number;
+  }
+
+  const fingerprints: SelectionSetFingerprint[] = [];
+
+  function walkForFingerprints(
+    selectionSet: SelectionSetNode | undefined,
+    pathStack: string[],
+    parentType: string | undefined,
+    visited: Set<string>
+  ) {
+    if (!selectionSet) return;
+
+    const directFields: string[] = [];
+    let charLen = 0;
+
+    for (const sel of selectionSet.selections) {
+      if (sel.kind === Kind.FIELD) {
+        directFields.push(sel.name.value);
+        charLen += sel.name.value.length + 2;
+      }
+    }
+
+    if (directFields.length >= 3) {
+      const sorted = Array.from(directFields).sort();
+      fingerprints.push({
+        fields: sorted,
+        fingerprint: sorted.join(","),
+        parentPath: pathStack.join(".") || "(root)",
+        parentType: parentType,
+        charLength: charLen,
+      });
+    }
+
+    for (const sel of selectionSet.selections) {
+      if (sel.kind === Kind.FIELD) {
+        const fieldName = sel.name.value;
+        if (sel.selectionSet) {
+          walkForFingerprints(
+            sel.selectionSet,
+            [...pathStack, fieldName],
+            fieldName,
+            visited
+          );
+        }
+      } else if (sel.kind === Kind.INLINE_FRAGMENT) {
+        const typeName = (sel as InlineFragmentNode).typeCondition?.name.value;
+        walkForFingerprints(
+          sel.selectionSet,
+          pathStack,
+          typeName || parentType,
+          visited
+        );
+      } else if (sel.kind === Kind.FRAGMENT_SPREAD) {
+        const fragName = sel.name.value;
+        if (visited.has(fragName)) continue;
+        const fragDef = fragmentMap.get(fragName);
+        if (!fragDef) continue;
+        const next = new Set(visited);
+        next.add(fragName);
+        walkForFingerprints(
+          fragDef.selectionSet,
+          pathStack,
+          fragDef.typeCondition.name.value,
+          next
+        );
+      }
+    }
+  }
+
+  for (const def of ast.definitions) {
+    if (def.kind === Kind.OPERATION_DEFINITION) {
+      walkForFingerprints(def.selectionSet, [], undefined, new Set());
+    }
+  }
+
+  const groups = new Map<
+    string,
+    { fields: string[]; charLength: number; occurrences: SelectionSetFingerprint[] }
+  >();
+  for (const fp of fingerprints) {
+    const existing = groups.get(fp.fingerprint);
+    if (existing) {
+      existing.occurrences.push(fp);
+    } else {
+      groups.set(fp.fingerprint, {
+        fields: fp.fields,
+        charLength: fp.charLength,
+        occurrences: [fp],
+      });
+    }
+  }
+
+  const results: FragmentSuggestion[] = [];
+  let idx = 0;
+
+  groups.forEach((group) => {
+    if (group.occurrences.length < 2) return;
+
+    const firstOcc = group.occurrences[0];
+    const typeName = firstOcc.parentType || "Shared";
+    const baseName = typeName.charAt(0).toUpperCase() + typeName.slice(1);
+    const suggestedName = `${baseName}Fields`;
+
+    const fragmentDefOverhead = `fragment ${suggestedName} on ${typeName} { ${group.fields.join(" ")} }`.length;
+    const spreadSize = `...${suggestedName}`.length;
+    const savings =
+      group.occurrences.length * group.charLength -
+      (spreadSize * group.occurrences.length + fragmentDefOverhead);
+
+    if (savings <= 0) return;
+
+    results.push({
+      id: `frag-${idx++}`,
+      suggestedName,
+      fields: group.fields,
+      occurrences: group.occurrences.map((o) => ({
+        parentPath: o.parentPath,
+        parentType: o.parentType,
+      })),
+      estimatedSavings: savings,
+    });
+  });
+
+  return results.sort((a, b) => b.estimatedSavings - a.estimatedSavings);
+}
+
+export function applyFragmentExtraction(
+  query: string,
+  suggestions: FragmentSuggestion[]
+): string {
+  if (suggestions.length === 0) return query;
+
+  const ast = parse(query);
+  const targetSets = new Map<string, string>();
+  for (const s of suggestions) {
+    const key = Array.from(s.fields).sort().join(",");
+    targetSets.set(key, s.suggestedName);
+  }
+
+  const edited = visit(ast, {
+    SelectionSet: {
+      enter(node) {
+        const directFields: string[] = [];
+        for (const sel of node.selections) {
+          if (sel.kind === Kind.FIELD) {
+            directFields.push(sel.name.value);
+          }
+        }
+        if (directFields.length < 3) return undefined;
+
+        const key = Array.from(directFields).sort().join(",");
+        const fragName = targetSets.get(key);
+        if (!fragName) return undefined;
+
+        const nonFieldSelections = node.selections.filter(
+          (s) => s.kind !== Kind.FIELD || s.selectionSet
+        );
+
+        return {
+          ...node,
+          selections: [
+            ...nonFieldSelections,
+            {
+              kind: Kind.FRAGMENT_SPREAD,
+              name: { kind: Kind.NAME, value: fragName },
+              directives: [],
+            },
+          ],
+        };
+      },
+    },
+  });
+
+  let result = print(edited);
+
+  for (const s of suggestions) {
+    const typeName =
+      s.occurrences.find((o) => o.parentType)?.parentType || "Unknown";
+    const capitalType =
+      typeName.charAt(0).toUpperCase() + typeName.slice(1);
+    result += `\n\nfragment ${s.suggestedName} on ${capitalType} {\n  ${s.fields.join("\n  ")}\n}`;
+  }
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Pagination Guard
+// ---------------------------------------------------------------------------
+
+export interface PaginationIssue {
+  fieldName: string;
+  fullPath: string;
+  depth: number;
+  confidence: "high" | "medium";
+  suggestedLimit: number;
+}
+
+export function detectUnboundedConnections(
+  tree: QueryTreeNode[]
+): PaginationIssue[] {
+  const issues: PaginationIssue[] = [];
+  const paginationArgs = new Set(["first", "last", "before", "after"]);
+  const connectionChildren = new Set(["edges", "nodes", "pageInfo", "aggregate"]);
+
+  function walk(node: QueryTreeNode, pathParts: string[], depth: number) {
+    if (node.nodeKind === "inlineFragment") {
+      for (const child of node.children) {
+        walk(child, pathParts, depth);
+      }
+      return;
+    }
+
+    const currentPath = [...pathParts, node.displayName];
+
+    if (node.children.length > 0) {
+      const hasPagination = node.arguments.some((a) => paginationArgs.has(a.name));
+
+      if (!hasPagination) {
+        const hasConnectionChild = node.children.some((c) =>
+          connectionChildren.has(c.displayName.toLowerCase())
+        );
+        const hasConnectionArg = node.arguments.some(
+          (a) => a.name === "where" || a.name === "orderBy"
+        );
+        const confidence: "high" | "medium" =
+          hasConnectionChild || hasConnectionArg ? "high" : "medium";
+
+        issues.push({
+          fieldName: node.displayName,
+          fullPath: currentPath.join(" > "),
+          depth,
+          confidence,
+          suggestedLimit: depth <= 1 ? 100 : 50,
+        });
+      }
+    }
+
+    for (const child of node.children) {
+      walk(child, currentPath, depth + 1);
+    }
+  }
+
+  for (const root of tree) {
+    walk(root, [], 1);
+  }
+
+  return issues.sort((a, b) => {
+    if (a.confidence !== b.confidence) return a.confidence === "high" ? -1 : 1;
+    return a.depth - b.depth;
+  });
+}
+
+export function addPaginationToFields(
+  query: string,
+  fieldPaths: string[],
+  limits: Map<string, number>
+): string {
+  const ast = parse(query);
+  const pathSet = new Set(fieldPaths);
+
+  function matchPath(fieldPath: string[]): number | null {
+    const joined = fieldPath.join(" > ");
+    if (!pathSet.has(joined)) return null;
+    return limits.get(joined) ?? 100;
+  }
+
+  const pathStack: string[] = [];
+
+  const edited = visit(ast, {
+    Field: {
+      enter(node) {
+        pathStack.push(node.name.value);
+        const limit = matchPath(pathStack);
+        if (limit === null) return undefined;
+
+        const alreadyHasFirst = node.arguments?.some(
+          (a) => a.name.value === "first"
+        );
+        if (alreadyHasFirst) return undefined;
+
+        return {
+          ...node,
+          arguments: [
+            ...(node.arguments || []),
+            {
+              kind: Kind.ARGUMENT,
+              name: { kind: Kind.NAME, value: "first" },
+              value: { kind: Kind.INT, value: String(limit) },
+            },
+          ],
+        };
+      },
+      leave() {
+        pathStack.pop();
+      },
+    },
+  });
+
+  return print(edited);
+}
