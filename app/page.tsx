@@ -4,7 +4,6 @@ import { useState, useMemo, useCallback, useRef } from "react";
 import { parse, print as gqlPrint, DocumentNode, OperationDefinitionNode, Kind } from "graphql";
 import { QueryEditor, type MonacoEditorInstance } from "@/components/QueryEditor";
 import { VariablesEditor } from "@/components/VariablesEditor";
-import { PlanSelector } from "@/components/PlanSelector";
 import { QueryTreeView } from "@/components/QueryTreeView";
 import { QuerySummaryCard } from "@/components/QuerySummaryCard";
 import { LocaleToggles } from "@/components/LocaleToggles";
@@ -30,8 +29,6 @@ import {
   addPaginationToFields,
   removeFieldsByName,
   minifyQuery,
-  formatBytes,
-  HygraphPlan,
   OperationType,
 } from "@/lib/query-analyzer";
 import {
@@ -70,14 +67,10 @@ const EXAMPLE_QUERY = `query GetArticles($locale: Locale!, $first: Int) {
   }
 }`;
 
-const EXAMPLE_VARIABLES = `{
-  "locale": "en",
-  "first": 10
-}`;
 
 const FEATURES = [
   { icon: "gauge", label: "Complexity scoring" },
-  { icon: "ruler", label: "Payload vs plan limits" },
+  { icon: "ruler", label: "Payload size analysis" },
   { icon: "copy", label: "Duplicate field detection" },
   { icon: "layers", label: "Nesting depth analysis" },
   { icon: "shield", label: "System field detection" },
@@ -93,8 +86,7 @@ const FEATURES = [
 
 export default function QueryOptimizerPage() {
   const [query, setQuery] = useState(EXAMPLE_QUERY);
-  const [variables, setVariables] = useState(EXAMPLE_VARIABLES);
-  const [plan, setPlan] = useState<HygraphPlan>("growth");
+  const [variables, setVariables] = useState("");
   const [operationType, setOperationType] = useState<OperationType>("query");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectedLocales, setSelectedLocales] = useState<Set<string>>(new Set());
@@ -123,6 +115,46 @@ export default function QueryOptimizerPage() {
       endColumn: endCol,
     });
     editor.focus();
+  }, []);
+
+  const handleFragmentZoom = useCallback((node: QueryTreeNode) => {
+    if (!node.fragmentName) return;
+    const editor = editorRef.current;
+    if (!editor) return;
+    const model = editor.getModel();
+    if (!model) return;
+
+    const searchPattern = new RegExp(
+      `^\\s*fragment\\s+${node.fragmentName}\\s+on\\s+`
+    );
+    const lineCount = model.getLineCount();
+    for (let i = 1; i <= lineCount; i++) {
+      const lineContent = model.getLineContent(i);
+      if (searchPattern.test(lineContent)) {
+        let endLine = i;
+        let braceDepth = 0;
+        for (let j = i; j <= lineCount; j++) {
+          const line = model.getLineContent(j);
+          for (const ch of line) {
+            if (ch === "{") braceDepth++;
+            else if (ch === "}") braceDepth--;
+          }
+          if (braceDepth <= 0 && j > i) {
+            endLine = j;
+            break;
+          }
+        }
+        editor.revealLineInCenter(i);
+        editor.setSelection({
+          startLineNumber: i,
+          startColumn: 1,
+          endLineNumber: endLine,
+          endColumn: model.getLineMaxColumn(endLine),
+        });
+        editor.focus();
+        break;
+      }
+    }
   }, []);
 
   const ast = useMemo<DocumentNode | null>(() => {
@@ -165,8 +197,8 @@ export default function QueryOptimizerPage() {
   }, [localeInfos]);
 
   const analysis = useMemo(() => {
-    return analyzeQuery(query, variables, plan);
-  }, [query, variables, plan]);
+    return analyzeQuery(query, variables);
+  }, [query, variables]);
 
   const systemFieldsAnalysis = useMemo(() => {
     if (!ast) return { occurrences: [], totalBytes: 0, safeBytes: 0, categories: { introspection: 0, metadata: 0, cache: 0 } };
@@ -218,7 +250,7 @@ export default function QueryOptimizerPage() {
       ?.map((v) => `$${v.variable.name.value}: ${gqlPrint(v.type)}`)
       .join(", ");
 
-    return treeToQuery(tree, selectedIds, opName, opType, varDefs);
+    return treeToQuery(tree, selectedIds, opName, opType, varDefs, ast);
   }, [ast, tree, selectedIds, initialized]);
 
   // Computed quick-action data
@@ -338,6 +370,19 @@ export default function QueryOptimizerPage() {
 
   const totalNodeCount = useMemo(() => collectAllNodeIds(tree).size, [tree]);
 
+  const fragmentCount = useMemo(() => {
+    if (!ast) return 0;
+    return ast.definitions.filter((d) => d.kind === Kind.FRAGMENT_DEFINITION).length;
+  }, [ast]);
+
+  const localeNames = useMemo(() => {
+    const allLocales = new Set<string>();
+    for (const info of localeInfos) {
+      for (const l of info.locales) allLocales.add(l);
+    }
+    return Array.from(allLocales);
+  }, [localeInfos]);
+
   // Tab definitions
   const suggestionBadge = optimization.suggestions.length + splitOptions.length;
   const detectionBadge =
@@ -450,12 +495,6 @@ export default function QueryOptimizerPage() {
                 Visualize, analyze, and optimize your GraphQL queries
               </p>
             </div>
-            <PlanSelector
-              plan={plan}
-              operationType={operationType}
-              onPlanChange={setPlan}
-              onOperationTypeChange={setOperationType}
-            />
           </div>
         </div>
 
@@ -548,6 +587,7 @@ export default function QueryOptimizerPage() {
                 selectedIds={selectedIds}
                 onSelectionChange={setSelectedIds}
                 onNodeClick={handleNodeClick}
+                onFragmentZoom={handleFragmentZoom}
               />
             </div>
           </div>
@@ -556,11 +596,18 @@ export default function QueryOptimizerPage() {
         {/* Metrics Bar + Quick Actions */}
         <div className="mb-4 space-y-3">
           <MetricsBar
-            payload={analysis.payload}
+            totalSize={analysis.payload.totalSize}
             complexity={analysis.complexity}
             selectedCount={selectedIds.size}
             totalCount={totalNodeCount}
             isValid={analysis.isValid}
+            operationName={analysis.operationName}
+            operationType={analysis.operationType}
+            localeCount={localeNames.length}
+            localeNames={localeNames}
+            variableCount={analysis.variables.length}
+            fragmentCount={fragmentCount}
+            issueCount={detectionBadge + analysisBadge}
           />
           {analysis.isValid && (
             <QuickActions

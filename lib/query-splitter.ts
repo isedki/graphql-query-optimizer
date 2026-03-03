@@ -151,7 +151,11 @@ function generateRelationshipSplit(
       const isExtracted = deepRelations.some(
         (dr) => dr.child.id === child.id
       );
-      if (child.nodeKind === "inlineFragment") {
+      if (child.nodeKind === "fragmentSpread" && child.fragmentName) {
+        if (!isExtracted) {
+          fieldLines.push(`      ...${child.fragmentName}`);
+        }
+      } else if (child.nodeKind === "inlineFragment") {
         if (isExtracted) {
           fieldLines.push(`      ... on ${child.typeName || child.name} { __typename }`);
         } else {
@@ -223,7 +227,9 @@ function buildFieldBody(node: QueryTreeNode, indent: number): string {
     lines.push(`${pad}${scalar}`);
   }
   for (const child of node.children) {
-    if (child.scalarFields.length > 0 || child.children.length > 0) {
+    if (child.nodeKind === "fragmentSpread" && child.fragmentName) {
+      lines.push(`${pad}...${child.fragmentName}`);
+    } else if (child.scalarFields.length > 0 || child.children.length > 0) {
       if (child.nodeKind === "inlineFragment") {
         lines.push(`${pad}... on ${child.typeName || child.name} {`);
       } else {

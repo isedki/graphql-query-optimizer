@@ -2,7 +2,6 @@ import {
   QueryAnalysis,
   minifyQuery,
   formatBytes,
-  getPayloadStatus,
   DuplicateFieldInfo,
 } from "./query-analyzer";
 import { QueryTreeNode } from "./query-graph";
@@ -215,7 +214,7 @@ export function generateSuggestions(
       description: `Query reaches ${analysis.complexity.depth} levels of nesting.${pathDetail}`,
       impact: `Depth: ${analysis.complexity.depth}`,
       whyItMatters:
-        "Each nesting level increases server processing time. Hygraph recommends flattening queries or splitting deeply nested parts into separate requests.",
+        "Each nesting level increases server processing time. Consider flattening queries or splitting deeply nested parts into separate requests.",
       canAutoFix: false,
     });
   }
@@ -230,7 +229,7 @@ export function generateSuggestions(
       description: `${treeInfo.scalarCount} scalar fields and ${treeInfo.relationCount} relations. Only fetch fields you actually use in your application.`,
       impact: `${analysis.complexity.fieldCount} fields`,
       whyItMatters:
-        "Every field adds to query complexity and response size. Hygraph recommends selecting only the fields your application needs.",
+        "Every field adds to query complexity and response size. Select only the fields your application needs.",
       canAutoFix: false,
     });
   }
@@ -260,7 +259,7 @@ export function generateSuggestions(
       title: `No pagination on ${fields}`,
       description: `${fields} ${treeInfo.missingPagination.length > 1 ? "have" : "has"} no "first" or "last" argument -- this fetches ALL matching entries.`,
       whyItMatters:
-        "Without pagination, Hygraph returns all matching records which increases response time and payload. Add a 'first' argument to limit results.",
+        "Without pagination, the API returns all matching records which increases response time and payload. Add a 'first' argument to limit results.",
       canAutoFix: false,
     });
   }
@@ -275,35 +274,7 @@ export function generateSuggestions(
       title: `Complex filter on ${fields}`,
       description: `The "where" argument on ${fields} is large. Consider simplifying the filter or using pagination to reduce request size.`,
       whyItMatters:
-        "Large filter arguments contribute to the total request payload measured against Hygraph's plan limits. Simpler filters with pagination are more efficient.",
-      canAutoFix: false,
-    });
-  }
-
-  // --- Payload size ---
-  const payloadStatus = getPayloadStatus(analysis.payload.percentageUsed);
-  if (payloadStatus === "critical") {
-    suggestions.push({
-      id: "payload-exceeded",
-      severity: "error",
-      category: "payload",
-      title: "Request size exceeds plan limit",
-      description: `Total payload (${formatBytes(analysis.payload.totalSize)}) exceeds your plan limit (${formatBytes(analysis.payload.planLimit)}).`,
-      impact: `${analysis.payload.percentageUsed}% of limit`,
-      whyItMatters:
-        "Exceeding Hygraph's request size limit returns a 413 error. You must reduce the query size to proceed.",
-      canAutoFix: false,
-    });
-  } else if (payloadStatus === "danger") {
-    suggestions.push({
-      id: "payload-warning",
-      severity: "warning",
-      category: "payload",
-      title: "Request size approaching limit",
-      description: `Total payload (${formatBytes(analysis.payload.totalSize)}) is ${analysis.payload.percentageUsed}% of your plan limit.`,
-      impact: `${analysis.payload.percentageUsed}% of limit`,
-      whyItMatters:
-        "You're approaching Hygraph's request size limit. Consider reducing query size to avoid 413 errors.",
+        "Large filter arguments increase the total request payload. Simpler filters with pagination are more efficient and reduce query size.",
       canAutoFix: false,
     });
   }
@@ -324,7 +295,7 @@ export function generateSuggestions(
       impact: `-${savingsPercentage}%`,
       impactPercentage: -savingsPercentage,
       whyItMatters:
-        "Every byte counts toward Hygraph's request size limit. Minifying can save significant space in complex queries.",
+        "Minifying removes whitespace and comments, reducing the request payload. This can save significant space in complex queries.",
       canAutoFix: true,
       autoFixLabel: "Minify query",
     });
@@ -353,23 +324,6 @@ export function generateSuggestions(
     });
   }
 
-  // --- Undefined variables ---
-  const undefinedVars = analysis.variables.filter(
-    (v) => !v.defined && v.name !== ""
-  );
-  if (undefinedVars.length > 0) {
-    suggestions.push({
-      id: "undefined-variables",
-      severity: "warning",
-      category: "variables",
-      title: `Variable${undefinedVars.length > 1 ? "s" : ""} provided but not defined`,
-      description: `${undefinedVars.map((v) => `$${v.name}`).join(", ")} ${undefinedVars.length > 1 ? "are" : "is"} in the variables JSON but not defined in the query.`,
-      impact: `${undefinedVars.length} extra`,
-      whyItMatters:
-        "Variables in the JSON that aren't used by the query add unnecessary bytes to your request payload.",
-      canAutoFix: false,
-    });
-  }
 
   // --- Duplicate fields with top offenders ---
   if (analysis.duplicateFieldsInfo.length > 0) {
@@ -390,7 +344,7 @@ export function generateSuggestions(
       impact: fragmentPercentage > 0 ? `-${fragmentPercentage}%` : `${analysis.duplicateFieldsInfo.length} duplicates`,
       impactPercentage: fragmentPercentage > 0 ? -fragmentPercentage : undefined,
       whyItMatters:
-        "Hygraph recommends using GraphQL fragments to avoid repetition. This reduces query size and makes queries more maintainable.",
+        "Using GraphQL fragments avoids repetition. This reduces query size and makes queries more maintainable.",
       canAutoFix: false,
       duplicateDetails: analysis.duplicateFieldsInfo,
     });

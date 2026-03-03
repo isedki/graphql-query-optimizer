@@ -151,7 +151,7 @@ export interface QueryAnalysis {
 export function analyzeQuery(
   query: string,
   variables: string,
-  plan: HygraphPlan
+  plan: HygraphPlan = "growth"
 ): QueryAnalysis {
   const defaultResult: QueryAnalysis = {
     isValid: false,
@@ -1735,7 +1735,7 @@ export function detectUnboundedConnections(
   const connectionChildren = new Set(["edges", "nodes", "pageInfo", "aggregate"]);
 
   function walk(node: QueryTreeNode, pathParts: string[], depth: number) {
-    if (node.nodeKind === "inlineFragment") {
+    if (node.nodeKind === "inlineFragment" || node.nodeKind === "fragmentSpread") {
       for (const child of node.children) {
         walk(child, pathParts, depth);
       }

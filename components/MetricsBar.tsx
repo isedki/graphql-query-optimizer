@@ -1,77 +1,108 @@
 "use client";
 
-import { formatBytes, getPayloadStatus, PayloadMetrics, ComplexityMetrics } from "@/lib/query-analyzer";
+import { formatBytes, ComplexityMetrics } from "@/lib/query-analyzer";
 
 interface MetricsBarProps {
-  payload: PayloadMetrics;
+  totalSize: number;
   complexity: ComplexityMetrics;
   selectedCount: number;
   totalCount: number;
   isValid: boolean;
+  operationName?: string;
+  operationType: string;
+  localeCount: number;
+  localeNames: string[];
+  variableCount: number;
+  fragmentCount: number;
+  issueCount: number;
+}
+
+function Pill({
+  label,
+  value,
+  className = "",
+  title,
+}: {
+  label: string;
+  value: string | number;
+  className?: string;
+  title?: string;
+}) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-zinc-800/60 text-xs ${className}`}
+      title={title}
+    >
+      <span className="text-zinc-500">{label}</span>
+      <span className="text-zinc-200 font-medium">{value}</span>
+    </span>
+  );
 }
 
 export function MetricsBar({
-  payload,
+  totalSize,
   complexity,
   selectedCount,
   totalCount,
   isValid,
+  operationName,
+  operationType,
+  localeCount,
+  localeNames,
+  variableCount,
+  fragmentCount,
+  issueCount,
 }: MetricsBarProps) {
   if (!isValid) return null;
 
-  const status = getPayloadStatus(payload.percentageUsed);
-  const statusColors: Record<string, string> = {
-    safe: "bg-emerald-500",
-    warning: "bg-amber-500",
-    danger: "bg-orange-500",
-    critical: "bg-red-500",
-  };
+  const opLabel = operationName
+    ? `${operationType} ${operationName}`
+    : operationType;
+
+  const localeLabel =
+    localeCount === 0
+      ? null
+      : localeNames.length > 0 && localeNames.length <= 3
+        ? localeNames.join(", ")
+        : localeCount === 1
+          ? "1 locale"
+          : `${localeCount} locales`;
 
   return (
-    <div className="glass-card rounded-xl p-3">
-      <div className="flex items-center gap-4 flex-wrap">
-        {/* Size indicator */}
-        <div className="flex items-center gap-2 flex-1 min-w-[200px]">
-          <span className="text-xs text-zinc-500 shrink-0" title="Actual HTTP request body size as sent to Hygraph API">
-            Request body:
-          </span>
-          <span className="text-xs font-medium text-zinc-300">
-            {formatBytes(payload.totalSize)}
-          </span>
-          <span className="text-xs text-zinc-600">/</span>
-          <span className="text-xs text-zinc-500">
-            {formatBytes(payload.planLimit)}
-          </span>
-          <div className="flex-1 h-1.5 bg-zinc-800 rounded-full overflow-hidden min-w-[60px]">
-            <div
-              className={`h-full rounded-full transition-all ${statusColors[status]}`}
-              style={{ width: `${Math.min(payload.percentageUsed, 100)}%` }}
-            />
-          </div>
-          <span className={`text-xs font-medium ${
-            status === "critical" ? "text-red-400" :
-            status === "danger" ? "text-orange-400" :
-            status === "warning" ? "text-amber-400" :
-            "text-emerald-400"
-          }`}>
-            {payload.percentageUsed}%
-          </span>
-        </div>
+    <div className="glass-card rounded-xl px-3 py-2.5">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-purple-500/15 border border-purple-500/20 text-xs">
+          <span className="text-purple-300 font-medium">{opLabel}</span>
+        </span>
 
-        {/* Stats */}
-        <div className="flex items-center gap-3 text-xs text-zinc-500">
-          <span>
-            <span className="text-zinc-300 font-medium">{selectedCount}</span>/{totalCount} fields
+        <Pill label="Size" value={formatBytes(totalSize)} title="Total HTTP request body size (query + variables)" />
+        <Pill label="Fields" value={`${selectedCount}/${totalCount}`} />
+        <Pill label="Depth" value={complexity.depth} />
+        <Pill label="Connections" value={complexity.connectionCount} />
+
+        {localeLabel && (
+          <Pill
+            label="Locales"
+            value={localeLabel}
+            title={localeNames.length > 3 ? localeNames.join(", ") : undefined}
+          />
+        )}
+
+        {variableCount > 0 && (
+          <Pill label="Variables" value={variableCount} />
+        )}
+
+        {fragmentCount > 0 && (
+          <Pill label="Fragments" value={fragmentCount} />
+        )}
+
+        {issueCount > 0 && (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-amber-500/10 border border-amber-500/20 text-xs">
+            <span className="text-amber-400 font-medium">
+              {issueCount} {issueCount === 1 ? "issue" : "issues"}
+            </span>
           </span>
-          <span className="text-zinc-700">|</span>
-          <span>
-            Depth: <span className="text-zinc-300 font-medium">{complexity.depth}</span>
-          </span>
-          <span className="text-zinc-700">|</span>
-          <span>
-            Connections: <span className="text-zinc-300 font-medium">{complexity.connectionCount}</span>
-          </span>
-        </div>
+        )}
       </div>
     </div>
   );

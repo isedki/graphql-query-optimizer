@@ -9,7 +9,7 @@ import {
   print,
 } from "graphql";
 
-export type NodeKind = "field" | "inlineFragment";
+export type NodeKind = "field" | "inlineFragment" | "fragmentSpread";
 
 export interface QueryTreeNode {
   id: string;
@@ -22,6 +22,7 @@ export interface QueryTreeNode {
   nodeKind: NodeKind;
   typeName?: string;
   alias?: string;
+  fragmentName?: string;
   arguments: { name: string; value: string }[];
   scalarFields: string[];
   estimatedSize: number;
@@ -82,34 +83,42 @@ function processSelectionSet(
       const nextVisited = new Set(visited);
       nextVisited.add(fragName);
 
+      const fragPath = parentPath ? `${parentPath}.${fragName}` : fragName;
       const resolved = processSelectionSet(
         fragDef.selectionSet,
-        depth,
-        parentPath,
+        depth + 1,
+        fragPath,
         fragmentMap,
         nextVisited
       );
-      for (const s of resolved.scalars) {
-        if (!scalars.includes(s)) scalars.push(s);
-      }
-      for (const c of resolved.children) {
-        const existing = children.find(
-          (ch) => ch.name === c.name && ch.nodeKind === c.nodeKind
-        );
-        if (!existing) {
-          children.push(c);
-        } else {
-          for (const s of c.scalarFields) {
-            if (!existing.scalarFields.includes(s)) existing.scalarFields.push(s);
-          }
-          for (const ch of c.children) {
-            if (!existing.children.find((ec) => ec.name === ch.name && ec.nodeKind === ch.nodeKind)) {
-              existing.children.push(ch);
-            }
-          }
-          existing.estimatedSize += c.estimatedSize;
-        }
-      }
+
+      if (resolved.scalars.length === 0 && resolved.children.length === 0) continue;
+
+      const fragId = `node-${nodeCounter++}`;
+      const scalarSize = resolved.scalars.reduce((sum, f) => sum + f.length + 6, 0);
+      const childrenSize = resolved.children.reduce((sum, c) => sum + c.estimatedSize, 0);
+      const overhead = fragName.length + 5;
+
+      const spreadLoc = selection.loc
+        ? { startLine: selection.loc.startToken.line, endLine: selection.loc.endToken.line }
+        : undefined;
+
+      children.push({
+        id: fragId,
+        name: fragName,
+        displayName: `...${fragName}`,
+        path: fragPath,
+        depth,
+        selected: true,
+        isRelation: true,
+        nodeKind: "fragmentSpread",
+        fragmentName: fragName,
+        arguments: [],
+        scalarFields: resolved.scalars,
+        estimatedSize: overhead + scalarSize + childrenSize,
+        children: resolved.children,
+        loc: spreadLoc,
+      });
     }
   }
 
@@ -249,12 +258,21 @@ export function treeToQuery(
   selectedIds: Set<string>,
   operationName?: string,
   operationType?: string,
-  variableDefs?: string
+  variableDefs?: string,
+  originalAst?: DocumentNode | null
 ): string {
+  const referencedFragments = new Set<string>();
+
   function renderNode(node: QueryTreeNode, indent: number): string | null {
     if (!selectedIds.has(node.id)) return null;
 
     const pad = "  ".repeat(indent);
+
+    if (node.nodeKind === "fragmentSpread" && node.fragmentName) {
+      referencedFragments.add(node.fragmentName);
+      return `${pad}...${node.fragmentName}`;
+    }
+
     const selectedChildren = node.children
       .map((c) => renderNode(c, indent + 1))
       .filter(Boolean);
@@ -301,7 +319,17 @@ export function treeToQuery(
   const opName = operationName ? ` ${operationName}` : "";
   const varDefsStr = variableDefs ? `(${variableDefs})` : "";
 
-  return `${opType}${opName}${varDefsStr} {\n${bodyParts.join("\n")}\n}`;
+  let result = `${opType}${opName}${varDefsStr} {\n${bodyParts.join("\n")}\n}`;
+
+  if (originalAst && referencedFragments.size > 0) {
+    for (const def of originalAst.definitions) {
+      if (def.kind === Kind.FRAGMENT_DEFINITION && referencedFragments.has(def.name.value)) {
+        result += "\n\n" + print(def);
+      }
+    }
+  }
+
+  return result;
 }
 
 export function collectAllNodeIds(roots: QueryTreeNode[]): Set<string> {

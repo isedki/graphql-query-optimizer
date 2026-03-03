@@ -199,3 +199,14 @@ body {
   border-radius: 9999px;
   transition: width 0.5s ease-out;
 }
+
+.fragment-link {
+  text-decoration: underline !important;
+  text-decoration-color: rgba(168, 85, 247, 0.5) !important;
+  text-underline-offset: 2px;
+  cursor: pointer !important;
+}
+.fragment-link:hover {
+  text-decoration-color: rgba(168, 85, 247, 0.9) !important;
+  color: #c084fc !important;
+}
