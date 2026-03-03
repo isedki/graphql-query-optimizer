@@ -4,10 +4,13 @@ import { useCallback, useRef } from "react";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import { parse, print } from "graphql";
 
+export type MonacoEditorInstance = Parameters<OnMount>[0];
+
 interface QueryEditorProps {
   value: string;
   onChange: (value: string) => void;
   height?: string;
+  onEditorMount?: (editor: MonacoEditorInstance) => void;
 }
 
 const BASE64_RE = /^[A-Za-z0-9+/\-_=\s]+$/;
@@ -45,12 +48,14 @@ export function QueryEditor({
   value,
   onChange,
   height = "300px",
+  onEditorMount,
 }: QueryEditorProps) {
-  const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
+  const editorRef = useRef<MonacoEditorInstance | null>(null);
 
   const handleEditorMount: OnMount = useCallback(
     (editor) => {
       editorRef.current = editor;
+      onEditorMount?.(editor);
       editor.onDidPaste(() => {
         const currentValue = editor.getValue();
         const beautified = resolveAndBeautify(currentValue);
@@ -59,7 +64,7 @@ export function QueryEditor({
         }
       });
     },
-    [onChange]
+    [onChange, onEditorMount]
   );
 
   const handleFormat = useCallback(() => {

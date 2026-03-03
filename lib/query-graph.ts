@@ -26,6 +26,7 @@ export interface QueryTreeNode {
   scalarFields: string[];
   estimatedSize: number;
   children: QueryTreeNode[];
+  loc?: { startLine: number; endLine: number };
 }
 
 type FragmentMap = Map<string, FragmentDefinitionNode>;
@@ -166,6 +167,9 @@ function processFieldNode(
     scalarFields: scalars,
     estimatedSize: overhead + scalarSize + argSize + childrenSize,
     children,
+    loc: node.loc
+      ? { startLine: node.loc.startToken.line, endLine: node.loc.endToken.line }
+      : undefined,
   };
 }
 
@@ -212,6 +216,9 @@ function processInlineFragment(
     scalarFields: scalars,
     estimatedSize: overhead + scalarSize + childrenSize,
     children,
+    loc: node.loc
+      ? { startLine: node.loc.startToken.line, endLine: node.loc.endToken.line }
+      : undefined,
   };
 }
 

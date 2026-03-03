@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useRef } from "react";
 import { parse, print as gqlPrint, DocumentNode, OperationDefinitionNode, Kind } from "graphql";
-import { QueryEditor } from "@/components/QueryEditor";
+import { QueryEditor, type MonacoEditorInstance } from "@/components/QueryEditor";
 import { VariablesEditor } from "@/components/VariablesEditor";
 import { PlanSelector } from "@/components/PlanSelector";
 import { QueryTreeView } from "@/components/QueryTreeView";
@@ -101,6 +101,29 @@ export default function QueryOptimizerPage() {
   const [initialized, setInitialized] = useState(false);
   const [copied, setCopied] = useState(false);
   const [showFeatures, setShowFeatures] = useState(true);
+  const editorRef = useRef<MonacoEditorInstance | null>(null);
+
+  const handleEditorMount = useCallback((editor: MonacoEditorInstance) => {
+    editorRef.current = editor;
+  }, []);
+
+  const handleNodeClick = useCallback((node: QueryTreeNode) => {
+    const editor = editorRef.current;
+    if (!editor || !node.loc) return;
+    const { startLine, endLine } = node.loc;
+    const model = editor.getModel();
+    const endCol = model
+      ? model.getLineMaxColumn(endLine)
+      : 1;
+    editor.revealLineInCenter(startLine);
+    editor.setSelection({
+      startLineNumber: startLine,
+      startColumn: 1,
+      endLineNumber: endLine,
+      endColumn: endCol,
+    });
+    editor.focus();
+  }, []);
 
   const ast = useMemo<DocumentNode | null>(() => {
     try {
@@ -481,7 +504,7 @@ export default function QueryOptimizerPage() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
           {/* Left Column: Editors */}
           <div className="space-y-3">
-            <QueryEditor value={query} onChange={setQuery} height="420px" />
+            <QueryEditor value={query} onChange={setQuery} height="420px" onEditorMount={handleEditorMount} />
             <VariablesEditor
               value={variables}
               onChange={setVariables}
@@ -524,6 +547,7 @@ export default function QueryOptimizerPage() {
                 roots={tree}
                 selectedIds={selectedIds}
                 onSelectionChange={setSelectedIds}
+                onNodeClick={handleNodeClick}
               />
             </div>
           </div>

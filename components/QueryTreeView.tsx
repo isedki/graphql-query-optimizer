@@ -12,12 +12,14 @@ interface QueryTreeViewProps {
   roots: QueryTreeNode[];
   selectedIds: Set<string>;
   onSelectionChange: (ids: Set<string>) => void;
+  onNodeClick?: (node: QueryTreeNode) => void;
 }
 
 export function QueryTreeView({
   roots,
   selectedIds,
   onSelectionChange,
+  onNodeClick,
 }: QueryTreeViewProps) {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => {
     const ids = new Set<string>();
@@ -114,6 +116,7 @@ export function QueryTreeView({
               selectedIds={selectedIds}
               onToggleExpand={toggleExpand}
               onToggleSelect={toggleSelect}
+              onNodeClick={onNodeClick}
             />
           ))
         )}
@@ -130,6 +133,7 @@ interface TreeNodeProps {
   selectedIds: Set<string>;
   onToggleExpand: (id: string) => void;
   onToggleSelect: (node: QueryTreeNode, shiftKey: boolean) => void;
+  onNodeClick?: (node: QueryTreeNode) => void;
 }
 
 function TreeNode({
@@ -140,6 +144,7 @@ function TreeNode({
   selectedIds,
   onToggleExpand,
   onToggleSelect,
+  onNodeClick,
 }: TreeNodeProps) {
   const isExpanded = expandedIds.has(node.id);
   const isSelected = selectedIds.has(node.id);
@@ -152,6 +157,7 @@ function TreeNode({
       <div
         className="group flex items-start gap-1.5 py-1 px-1 rounded hover:bg-white/5 cursor-pointer"
         style={{ paddingLeft: `${depth * 20 + 4}px` }}
+        onClick={() => onNodeClick?.(node)}
       >
         {/* Connector lines */}
         {depth > 0 && (
@@ -246,7 +252,18 @@ function TreeNode({
                 {arg.name}: {arg.value.length > 20 ? arg.value.slice(0, 20) + "..." : arg.value}
               </span>
             ))}
-            <span className="text-[10px] text-zinc-600 ml-auto shrink-0">
+            <span className="text-[10px] text-zinc-600 ml-auto shrink-0 flex items-center gap-1">
+              {node.loc && onNodeClick && (
+                <svg
+                  className="w-3 h-3 text-zinc-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" />
+                </svg>
+              )}
               ~{formatBytes(node.estimatedSize)}
             </span>
           </div>
@@ -279,6 +296,7 @@ function TreeNode({
               selectedIds={selectedIds}
               onToggleExpand={onToggleExpand}
               onToggleSelect={onToggleSelect}
+              onNodeClick={onNodeClick}
             />
           ))}
         </div>
