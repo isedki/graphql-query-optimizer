@@ -1,6 +1,5 @@
 import {
   QueryAnalysis,
-  minifyQuery,
   formatBytes,
   DuplicateFieldInfo,
 } from "./query-analyzer";
@@ -291,13 +290,12 @@ export function generateSuggestions(
       severity: "info",
       category: "payload",
       title: "Whitespace can be removed",
-      description: `Minifying saves ${formatBytes(savingsFromMinify)} (${savingsPercentage}% of total).`,
+      description: `Minifying would save ${formatBytes(savingsFromMinify)} (${savingsPercentage}% of total). Consider minifying queries in production to reduce payload size.`,
       impact: `-${savingsPercentage}%`,
       impactPercentage: -savingsPercentage,
       whyItMatters:
-        "Minifying removes whitespace and comments, reducing the request payload. This can save significant space in complex queries.",
-      canAutoFix: true,
-      autoFixLabel: "Minify query",
+        "Minifying removes whitespace and comments, reducing the request payload. Apply minification as a build step or at the network layer before sending queries to the server.",
+      canAutoFix: false,
     });
   }
 
@@ -353,9 +351,7 @@ export function generateSuggestions(
   let optimizedQuery = originalQuery;
   let optimizedVariables = originalVariables;
 
-  if (analysis.ast && suggestions.some((s) => s.id === "minify-query")) {
-    optimizedQuery = minifyQuery(analysis.ast);
-  }
+  // Minification is recommendation-only; no auto-apply
 
   const totalSavings = analysis.payload.totalSize - analysis.payload.minifiedSize;
   const totalSavingsPercentage =
@@ -379,21 +375,10 @@ export function generateSuggestions(
 }
 
 export function applySuggestion(
-  suggestionId: string,
-  analysis: QueryAnalysis,
+  _suggestionId: string,
+  _analysis: QueryAnalysis,
   currentQuery: string,
   currentVariables: string
 ): { query: string; variables: string } {
-  switch (suggestionId) {
-    case "minify-query":
-      if (analysis.ast) {
-        return {
-          query: minifyQuery(analysis.ast),
-          variables: currentVariables,
-        };
-      }
-      break;
-  }
-
   return { query: currentQuery, variables: currentVariables };
 }

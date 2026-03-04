@@ -4,10 +4,15 @@ import { useState } from "react";
 import { SplitOption } from "@/lib/query-splitter";
 import { formatBytes } from "@/lib/query-analyzer";
 
+export interface SplitQueryInfo {
+  name: string;
+  query: string;
+}
+
 interface SplitOptionsPanelProps {
   options: SplitOption[];
   onCopyQuery?: (query: string) => void;
-  onApplyAll?: (combinedQuery: string) => void;
+  onApplyAll?: (queries: SplitQueryInfo[]) => void;
 }
 
 export function SplitOptionsPanel({
@@ -57,7 +62,7 @@ function SplitOptionCard({
   isExpanded: boolean;
   onToggle: () => void;
   onCopyQuery?: (query: string) => void;
-  onApplyAll?: (combinedQuery: string) => void;
+  onApplyAll?: (queries: SplitQueryInfo[]) => void;
 }) {
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
   const [copiedAll, setCopiedAll] = useState(false);
@@ -109,10 +114,14 @@ function SplitOptionCard({
           <div className="flex items-center gap-2 py-1">
             {onApplyAll && (
               <button
-                onClick={() => onApplyAll(combinedQuery)}
+                onClick={() =>
+                  onApplyAll(
+                    option.queries.map((q) => ({ name: q.name, query: q.query }))
+                  )
+                }
                 className="text-xs px-3 py-1 rounded bg-purple-500/20 text-purple-300 hover:bg-purple-500/30 transition-colors font-medium border border-purple-500/20"
               >
-                Apply all {option.queries.length} queries to editor
+                Split into {option.queries.length} tabs
               </button>
             )}
             <button

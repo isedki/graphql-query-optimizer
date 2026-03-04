@@ -7,7 +7,7 @@ import { VariablesEditor } from "@/components/VariablesEditor";
 import { QueryTreeView } from "@/components/QueryTreeView";
 import { QuerySummaryCard } from "@/components/QuerySummaryCard";
 import { LocaleToggles } from "@/components/LocaleToggles";
-import { SplitOptionsPanel } from "@/components/SplitOptionsPanel";
+import { SplitOptionsPanel, type SplitQueryInfo } from "@/components/SplitOptionsPanel";
 import { MetricsBar } from "@/components/MetricsBar";
 import { OptimizationSuggestions } from "@/components/OptimizationSuggestions";
 import { DepthPathsCard } from "@/components/DepthPathsCard";
@@ -28,7 +28,6 @@ import {
   detectUnboundedConnections,
   addPaginationToFields,
   removeFieldsByName,
-  minifyQuery,
   OperationType,
 } from "@/lib/query-analyzer";
 import {
@@ -94,6 +93,11 @@ export default function QueryOptimizerPage() {
   const [copied, setCopied] = useState(false);
   const [showFeatures, setShowFeatures] = useState(true);
   const editorRef = useRef<MonacoEditorInstance | null>(null);
+
+  // Split-tab state
+  interface QueryTab { label: string; query: string }
+  const [queryTabs, setQueryTabs] = useState<QueryTab[]>([]);
+  const [activeTabIdx, setActiveTabIdx] = useState(0);
 
   const handleEditorMount = useCallback((editor: MonacoEditorInstance) => {
     editorRef.current = editor;
@@ -253,13 +257,6 @@ export default function QueryOptimizerPage() {
     return treeToQuery(tree, selectedIds, opName, opType, varDefs, ast);
   }, [ast, tree, selectedIds, initialized]);
 
-  // Computed quick-action data
-  const minifySavings = analysis.payload.totalSize - analysis.payload.minifiedSize;
-  const minifyPct = analysis.payload.totalSize > 0
-    ? Math.round((minifySavings / analysis.payload.totalSize) * 100)
-    : 0;
-  const canMinify = minifySavings > 100 && minifyPct > 5;
-
   const safeSystemFieldNames = useMemo(() => {
     return systemFieldsAnalysis.occurrences
       .filter((o) => o.safeToRemove)
@@ -309,10 +306,6 @@ export default function QueryOptimizerPage() {
     });
   }, [query]);
 
-  const handleMinify = useCallback(() => {
-    if (ast) setQuery(minifyQuery(ast));
-  }, [ast]);
-
   const handleRemoveSystemFields = useCallback(
     (fieldNames: string[]) => {
       try {
@@ -357,6 +350,43 @@ export default function QueryOptimizerPage() {
       setQuery(addPaginationToFields(query, paths, limits));
     } catch { /* ignore */ }
   }, [query, paginationIssues]);
+
+  const handleSplitApply = useCallback(
+    (queries: SplitQueryInfo[]) => {
+      if (queries.length === 0) return;
+      const tabs: QueryTab[] = [
+        { label: "Original", query },
+        ...queries.map((q) => ({ label: q.name, query: q.query })),
+      ];
+      setQueryTabs(tabs);
+      setActiveTabIdx(1);
+      setQuery(tabs[1].query);
+    },
+    [query]
+  );
+
+  const handleTabSwitch = useCallback(
+    (idx: number) => {
+      // Persist current edits into the active tab before switching
+      setQueryTabs((prev) => {
+        const updated = [...prev];
+        if (updated[activeTabIdx]) {
+          updated[activeTabIdx] = { ...updated[activeTabIdx], query };
+        }
+        return updated;
+      });
+      setActiveTabIdx(idx);
+      setQuery(queryTabs[idx].query);
+    },
+    [query, queryTabs, activeTabIdx]
+  );
+
+  const handleCloseTabs = useCallback(() => {
+    const original = queryTabs[0]?.query ?? query;
+    setQueryTabs([]);
+    setActiveTabIdx(0);
+    setQuery(original);
+  }, [queryTabs, query]);
 
   const variablesError = useMemo(() => {
     if (!variables.trim()) return undefined;
@@ -407,7 +437,7 @@ export default function QueryOptimizerPage() {
             suggestions={optimization.suggestions}
             onApply={handleApplySuggestion}
           />
-          <SplitOptionsPanel options={splitOptions} onApplyAll={setQuery} />
+          <SplitOptionsPanel options={splitOptions} onApplyAll={handleSplitApply} />
         </div>
       ),
     },
@@ -543,6 +573,30 @@ export default function QueryOptimizerPage() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
           {/* Left Column: Editors */}
           <div className="space-y-3">
+            {queryTabs.length > 0 && (
+              <div className="flex items-center gap-1 bg-zinc-900/60 rounded-lg p-1 border border-white/5">
+                {queryTabs.map((tab, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => handleTabSwitch(idx)}
+                    className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                      idx === activeTabIdx
+                        ? "bg-purple-500/20 text-purple-300 border border-purple-500/30"
+                        : "text-zinc-400 hover:text-zinc-300 hover:bg-white/5 border border-transparent"
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+                <button
+                  onClick={handleCloseTabs}
+                  className="ml-auto px-2 py-1.5 text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors"
+                  title="Close split view"
+                >
+                  &times; Close
+                </button>
+              </div>
+            )}
             <QueryEditor value={query} onChange={setQuery} height="420px" onEditorMount={handleEditorMount} />
             <VariablesEditor
               value={variables}
@@ -611,9 +665,6 @@ export default function QueryOptimizerPage() {
           />
           {analysis.isValid && (
             <QuickActions
-              canMinify={canMinify}
-              minifySavingsLabel={canMinify ? `-${minifyPct}%` : undefined}
-              onMinify={handleMinify}
               safeSystemFieldCount={safeSystemFieldNames.length}
               onRemoveSystemFields={() => handleRemoveSystemFields(safeSystemFieldNames)}
               richTextFixCount={richTextOverfetches.length}

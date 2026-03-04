@@ -1790,26 +1790,53 @@ export function addPaginationToFields(
   const ast = parse(query);
   const pathSet = new Set(fieldPaths);
 
-  function matchPath(fieldPath: string[]): number | null {
-    const joined = fieldPath.join(" > ");
-    if (!pathSet.has(joined)) return null;
-    return limits.get(joined) ?? 100;
+  const fragMap: FragmentMap = new Map();
+  for (const def of ast.definitions) {
+    if (def.kind === Kind.FRAGMENT_DEFINITION) {
+      fragMap.set(def.name.value, def);
+    }
   }
 
-  const pathStack: string[] = [];
+  // Pass 1: resolve paths through fragments, mapping loc.start -> resolved path
+  const locToPath = new Map<number, string>();
 
+  function walkSelections(
+    selections: SelectionSetNode["selections"],
+    pathParts: string[]
+  ) {
+    for (const sel of selections) {
+      if (sel.kind === Kind.FIELD) {
+        const cur = [...pathParts, sel.name.value];
+        if (sel.loc) locToPath.set(sel.loc.start, cur.join(" > "));
+        if (sel.selectionSet)
+          walkSelections(sel.selectionSet.selections, cur);
+      } else if (sel.kind === Kind.INLINE_FRAGMENT) {
+        if (sel.selectionSet)
+          walkSelections(sel.selectionSet.selections, pathParts);
+      } else if (sel.kind === Kind.FRAGMENT_SPREAD) {
+        const frag = fragMap.get(sel.name.value);
+        if (frag?.selectionSet)
+          walkSelections(frag.selectionSet.selections, pathParts);
+      }
+    }
+  }
+
+  for (const def of ast.definitions) {
+    if (def.kind === Kind.OPERATION_DEFINITION && def.selectionSet) {
+      walkSelections(def.selectionSet.selections, []);
+    }
+  }
+
+  // Pass 2: visit AST, match by loc offset
   const edited = visit(ast, {
     Field: {
       enter(node) {
-        pathStack.push(node.name.value);
-        const limit = matchPath(pathStack);
-        if (limit === null) return undefined;
-
-        const alreadyHasFirst = node.arguments?.some(
-          (a) => a.name.value === "first"
-        );
-        if (alreadyHasFirst) return undefined;
-
+        if (!node.loc) return undefined;
+        const resolved = locToPath.get(node.loc.start);
+        if (!resolved || !pathSet.has(resolved)) return undefined;
+        if (node.arguments?.some((a) => a.name.value === "first"))
+          return undefined;
+        const limit = limits.get(resolved) ?? 100;
         return {
           ...node,
           arguments: [
@@ -1821,9 +1848,6 @@ export function addPaginationToFields(
             },
           ],
         };
-      },
-      leave() {
-        pathStack.pop();
       },
     },
   });

@@ -1,9 +1,6 @@
 "use client";
 
 interface QuickActionsProps {
-  canMinify: boolean;
-  minifySavingsLabel?: string;
-  onMinify: () => void;
   safeSystemFieldCount: number;
   onRemoveSystemFields: () => void;
   richTextFixCount: number;
@@ -15,9 +12,6 @@ interface QuickActionsProps {
 }
 
 export function QuickActions({
-  canMinify,
-  minifySavingsLabel,
-  onMinify,
   safeSystemFieldCount,
   onRemoveSystemFields,
   richTextFixCount,
@@ -28,12 +22,6 @@ export function QuickActions({
   onFixPagination,
 }: QuickActionsProps) {
   const actions: { key: string; label: string; onClick: () => void; show: boolean }[] = [
-    {
-      key: "minify",
-      label: minifySavingsLabel ? `Minify query ${minifySavingsLabel}` : "Minify query",
-      onClick: onMinify,
-      show: canMinify,
-    },
     {
       key: "system",
       label: `Remove ${safeSystemFieldCount} system field${safeSystemFieldCount !== 1 ? "s" : ""}`,
