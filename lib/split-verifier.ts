@@ -404,6 +404,38 @@ function extractIdsFromResponse(response: unknown): string[] {
   return ids;
 }
 
+export interface SingleQueryResult {
+  response: unknown;
+  durationMs: number;
+  responseSize: number;
+  error?: string;
+}
+
+export async function runQueryAgainstEndpoint(
+  endpoint: string,
+  headers: Record<string, string>,
+  query: string,
+  variables: Record<string, unknown>,
+  onProgress?: (step: string) => void
+): Promise<SingleQueryResult> {
+  onProgress?.("Running query...");
+  const start = Date.now();
+  try {
+    const response = await executeQuery(endpoint, headers, query, variables);
+    const durationMs = Date.now() - start;
+    const responseSize = JSON.stringify(response).length;
+    onProgress?.("Done");
+    return { response, durationMs, responseSize };
+  } catch (err) {
+    return {
+      response: null,
+      durationMs: Date.now() - start,
+      responseSize: 0,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
 export async function testSplitAgainstEndpoint(
   config: TestConfig
 ): Promise<LiveTestResult> {
