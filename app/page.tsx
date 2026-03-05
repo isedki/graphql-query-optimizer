@@ -93,6 +93,7 @@ export default function QueryOptimizerPage() {
   const [selectedLocales, setSelectedLocales] = useState<Set<string>>(new Set());
   const [initialized, setInitialized] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [copiedTab, setCopiedTab] = useState<number | "all" | null>(null);
   const [showFeatures, setShowFeatures] = useState(true);
   const editorRef = useRef<MonacoEditorInstance | null>(null);
 
@@ -394,6 +395,25 @@ export default function QueryOptimizerPage() {
     setQuery(original);
   }, [queryTabs, query]);
 
+  const handleCopyTab = useCallback((idx: number) => {
+    const tab = queryTabs[idx];
+    if (!tab) return;
+    navigator.clipboard.writeText(tab.query).then(() => {
+      setCopiedTab(idx);
+      setTimeout(() => setCopiedTab(null), 1500);
+    });
+  }, [queryTabs]);
+
+  const handleCopyAllTabs = useCallback(() => {
+    const allQueries = queryTabs
+      .map((t) => `# --- ${t.label} ---\n${t.query}`)
+      .join("\n\n");
+    navigator.clipboard.writeText(allQueries).then(() => {
+      setCopiedTab("all");
+      setTimeout(() => setCopiedTab(null), 1500);
+    });
+  }, [queryTabs]);
+
   const variablesError = useMemo(() => {
     if (!variables.trim()) return undefined;
     try {
@@ -582,25 +602,54 @@ export default function QueryOptimizerPage() {
             {queryTabs.length > 0 && (
               <div className="flex items-center gap-1 bg-zinc-900/60 rounded-lg p-1 border border-white/5 overflow-x-auto custom-scrollbar flex-nowrap">
                 {queryTabs.map((tab, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => handleTabSwitch(idx)}
-                    className={`shrink-0 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                      idx === activeTabIdx
-                        ? "bg-purple-500/20 text-purple-300 border border-purple-500/30"
-                        : "text-zinc-400 hover:text-zinc-300 hover:bg-white/5 border border-transparent"
-                    }`}
-                  >
-                    {tab.label}
-                  </button>
+                  <div key={idx} className="shrink-0 flex items-center gap-0.5">
+                    <button
+                      onClick={() => handleTabSwitch(idx)}
+                      className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                        idx === activeTabIdx
+                          ? "bg-purple-500/20 text-purple-300 border border-purple-500/30"
+                          : "text-zinc-400 hover:text-zinc-300 hover:bg-white/5 border border-transparent"
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleCopyTab(idx); }}
+                      className="p-1 rounded text-zinc-500 hover:text-zinc-300 hover:bg-white/5 transition-colors"
+                      title={`Copy ${tab.label}`}
+                    >
+                      {copiedTab === idx ? (
+                        <svg className="w-3 h-3 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                        </svg>
+                      ) : (
+                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
                 ))}
-                <button
-                  onClick={handleCloseTabs}
-                  className="shrink-0 ml-auto px-2 py-1.5 text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors"
-                  title="Close split view"
-                >
-                  &times; Close
-                </button>
+                <div className="shrink-0 ml-auto flex items-center gap-1">
+                  <button
+                    onClick={handleCopyAllTabs}
+                    className="px-2 py-1.5 text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors flex items-center gap-1"
+                    title="Copy all queries"
+                  >
+                    {copiedTab === "all" ? (
+                      <><svg className="w-3 h-3 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg><span className="text-emerald-400">Copied!</span></>
+                    ) : (
+                      <><svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>Copy All</>
+                    )}
+                  </button>
+                  <button
+                    onClick={handleCloseTabs}
+                    className="px-2 py-1.5 text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors"
+                    title="Close split view"
+                  >
+                    &times; Close
+                  </button>
+                </div>
               </div>
             )}
             {queryTabs.length > 0 && (
@@ -657,7 +706,7 @@ export default function QueryOptimizerPage() {
               </span>
             </div>
 
-            <div style={{ height: "560px" }}>
+            <div style={{ height: "800px" }}>
               <QueryTreeView
                 roots={tree}
                 selectedIds={selectedIds}

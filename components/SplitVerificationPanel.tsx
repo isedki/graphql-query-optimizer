@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import type { LiveTestResult, TestConfig } from "@/lib/split-verifier";
 import { testSplitAgainstEndpoint } from "@/lib/split-verifier";
 
@@ -21,6 +21,16 @@ export function SplitVerificationPanel({
   const [liveResult, setLiveResult] = useState<LiveTestResult | null>(null);
   const [liveError, setLiveError] = useState<string | null>(null);
   const [expandedResponses, setExpandedResponses] = useState<Set<string>>(new Set());
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout>>();
+
+  const handleCopyJson = useCallback((key: string, data: unknown) => {
+    navigator.clipboard.writeText(JSON.stringify(data, null, 2)).then(() => {
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      setCopiedKey(key);
+      copyTimerRef.current = setTimeout(() => setCopiedKey(null), 1500);
+    });
+  }, []);
 
   const toggleResponse = useCallback((name: string) => {
     setExpandedResponses((prev) => {
@@ -152,6 +162,10 @@ export function SplitVerificationPanel({
               <span className="text-[10px] text-zinc-500 ml-auto">
                 {formatBytes(JSON.stringify(liveResult.originalResponse).length)}
               </span>
+              <CopyButton
+                copied={copiedKey === "__original__"}
+                onClick={(e) => { e.stopPropagation(); handleCopyJson("__original__", liveResult.originalResponse); }}
+              />
             </button>
             {expandedResponses.has("__original__") && (
               <pre className="text-[10px] text-zinc-400 px-2.5 py-2 max-h-[250px] overflow-auto custom-scrollbar whitespace-pre-wrap break-all bg-zinc-950/30">
@@ -183,6 +197,10 @@ export function SplitVerificationPanel({
                   <span className="text-[10px] text-zinc-500 ml-auto shrink-0">
                     {formatBytes(JSON.stringify(sr.response).length)}
                   </span>
+                  <CopyButton
+                    copied={copiedKey === sr.name}
+                    onClick={(e) => { e.stopPropagation(); handleCopyJson(sr.name, sr.response); }}
+                  />
                 </button>
                 {expandedResponses.has(sr.name) && (
                   <pre className="text-[10px] text-zinc-400 px-2.5 py-2 max-h-[250px] overflow-auto custom-scrollbar whitespace-pre-wrap break-all bg-zinc-950/30">
@@ -206,6 +224,10 @@ export function SplitVerificationPanel({
               <span className="text-[10px] text-zinc-500 ml-auto">
                 {formatBytes(JSON.stringify(liveResult.mergedResponse).length)}
               </span>
+              <CopyButton
+                copied={copiedKey === "__merged__"}
+                onClick={(e) => { e.stopPropagation(); handleCopyJson("__merged__", liveResult.mergedResponse); }}
+              />
             </button>
             {expandedResponses.has("__merged__") && (
               <pre className="text-[10px] text-zinc-400 px-2.5 py-2 max-h-[250px] overflow-auto custom-scrollbar whitespace-pre-wrap break-all bg-zinc-950/30">
@@ -263,6 +285,26 @@ function ChevronIcon({ className }: { className?: string }) {
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
     </svg>
+  );
+}
+
+function CopyButton({ copied, onClick }: { copied: boolean; onClick: (e: React.MouseEvent) => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="p-0.5 rounded text-zinc-500 hover:text-zinc-300 transition-colors shrink-0"
+      title="Copy to clipboard"
+    >
+      {copied ? (
+        <svg className="w-3 h-3 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+        </svg>
+      ) : (
+        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+        </svg>
+      )}
+    </button>
   );
 }
 
