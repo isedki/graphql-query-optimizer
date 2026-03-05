@@ -46,6 +46,7 @@ import {
   runQueryAgainstEndpoint,
   type SingleQueryResult,
 } from "@/lib/split-verifier";
+import { generateReport } from "@/lib/report-generator";
 
 const EXAMPLE_QUERY = `query GetArticles($locale: Locale!, $first: Int) {
   articles(locales: [$locale], first: $first) {
@@ -97,6 +98,7 @@ export default function QueryOptimizerPage() {
   const [initialized, setInitialized] = useState(false);
   const [copied, setCopied] = useState(false);
   const [copiedTab, setCopiedTab] = useState<number | "all" | null>(null);
+  const [copiedReport, setCopiedReport] = useState(false);
   const [showFeatures, setShowFeatures] = useState(false);
   const editorRef = useRef<MonacoEditorInstance | null>(null);
 
@@ -509,6 +511,34 @@ export default function QueryOptimizerPage() {
     return Array.from(allLocales);
   }, [localeInfos]);
 
+  const handleGenerateReport = useCallback(() => {
+    const md = generateReport({
+      query,
+      analysis,
+      systemFieldsAnalysis,
+      richTextOverfetches,
+      paginationIssues,
+      fragmentSuggestions,
+      optimization,
+      splitOptions,
+      queryTabs,
+      tree,
+      ast,
+      localeNames,
+      fragmentCount,
+      totalNodeCount: collectAllNodeIds(tree).size,
+      selectedCount: selectedIds.size,
+    });
+    navigator.clipboard.writeText(md).then(() => {
+      setCopiedReport(true);
+      setTimeout(() => setCopiedReport(false), 2000);
+    });
+  }, [
+    query, analysis, systemFieldsAnalysis, richTextOverfetches,
+    paginationIssues, fragmentSuggestions, optimization, splitOptions,
+    queryTabs, tree, ast, localeNames, fragmentCount, selectedIds,
+  ]);
+
   // Tab definitions
   const suggestionBadge = optimization.suggestions.length + splitOptions.length;
   const detectionBadge =
@@ -879,6 +909,15 @@ export default function QueryOptimizerPage() {
                   onFixPaginationAll={handleFixAllPaginationAll}
                 />
               )}
+              {analysis.isValid && (
+                <button
+                  onClick={handleGenerateReport}
+                  className="w-full py-2 rounded-lg bg-zinc-800/80 border border-white/10 text-zinc-300 text-xs font-medium hover:bg-zinc-700/80 transition-colors flex items-center justify-center gap-2"
+                >
+                  <ReportIcon className="w-3.5 h-3.5" />
+                  {copiedReport ? "Report copied to clipboard!" : "Generate Report (Markdown)"}
+                </button>
+              )}
             </div>
 
             {/* Tabbed Analysis Panel */}
@@ -1037,6 +1076,14 @@ function ErrorIcon({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+    </svg>
+  );
+}
+
+function ReportIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
     </svg>
   );
 }
