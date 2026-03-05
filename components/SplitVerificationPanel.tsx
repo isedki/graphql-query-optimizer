@@ -12,42 +12,23 @@ interface SplitVerificationPanelProps {
   verification: SplitVerification | null;
   queryTabs: { label: string; query: string }[];
   variables: string;
+  endpoint: string;
+  authToken: string;
 }
 
 export function SplitVerificationPanel({
   verification,
   queryTabs,
   variables,
+  endpoint,
+  authToken,
 }: SplitVerificationPanelProps) {
   const [expanded, setExpanded] = useState(false);
   const [showLiveTest, setShowLiveTest] = useState(false);
-  const [endpoint, setEndpoint] = useState("");
-  const [headers, setHeaders] = useState<{ key: string; value: string }[]>([
-    { key: "", value: "" },
-  ]);
   const [progress, setProgress] = useState<string | null>(null);
   const [liveResult, setLiveResult] = useState<LiveTestResult | null>(null);
   const [liveError, setLiveError] = useState<string | null>(null);
   const [showResponses, setShowResponses] = useState(false);
-
-  const addHeader = useCallback(() => {
-    setHeaders((prev) => [...prev, { key: "", value: "" }]);
-  }, []);
-
-  const updateHeader = useCallback(
-    (idx: number, field: "key" | "value", val: string) => {
-      setHeaders((prev) => {
-        const next = [...prev];
-        next[idx] = { ...next[idx], [field]: val };
-        return next;
-      });
-    },
-    []
-  );
-
-  const removeHeader = useCallback((idx: number) => {
-    setHeaders((prev) => prev.filter((_, i) => i !== idx));
-  }, []);
 
   const handleRunTest = useCallback(async () => {
     if (!endpoint.trim()) return;
@@ -63,9 +44,9 @@ export function SplitVerificationPanel({
       }
     })();
 
-    const headerMap: Record<string, string> = {};
-    for (const h of headers) {
-      if (h.key.trim()) headerMap[h.key.trim()] = h.value;
+    const headers: Record<string, string> = {};
+    if (authToken.trim()) {
+      headers["Authorization"] = `Bearer ${authToken.trim()}`;
     }
 
     const originalQuery = queryTabs[0]?.query ?? "";
@@ -76,7 +57,7 @@ export function SplitVerificationPanel({
 
     const config: TestConfig = {
       endpoint: endpoint.trim(),
-      headers: headerMap,
+      headers,
       originalQuery,
       splitQueries,
       variables: parsedVars,
@@ -92,7 +73,7 @@ export function SplitVerificationPanel({
     } finally {
       setProgress(null);
     }
-  }, [endpoint, headers, queryTabs, variables]);
+  }, [endpoint, authToken, queryTabs, variables]);
 
   if (!verification) return null;
 
@@ -215,73 +196,30 @@ export function SplitVerificationPanel({
               <ChevronIcon
                 className={`w-3 h-3 transition-transform ${showLiveTest ? "rotate-90" : ""}`}
               />
-              Test against endpoint
+              Compare split vs original (live)
             </button>
 
             {showLiveTest && (
               <div className="mt-2 space-y-2">
-                <div>
-                  <label className="block text-[10px] text-zinc-500 mb-1">
-                    Endpoint URL
-                  </label>
-                  <input
-                    type="text"
-                    value={endpoint}
-                    onChange={(e) => setEndpoint(e.target.value)}
-                    placeholder="https://api.example.com/graphql"
-                    className="w-full px-2.5 py-1.5 rounded-md bg-zinc-800/80 border border-white/10 text-xs text-zinc-300 placeholder:text-zinc-600 focus:outline-none focus:border-purple-500/40"
-                  />
-                </div>
-
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-[10px] text-zinc-500">Headers</label>
+                {!endpoint.trim() ? (
+                  <p className="text-[10px] text-zinc-500 italic">
+                    Configure the endpoint below the Variables editor first, then come back here to compare.
+                  </p>
+                ) : (
+                  <>
+                    <p className="text-[10px] text-zinc-500">
+                      Using endpoint: <span className="text-zinc-400">{endpoint}</span>
+                    </p>
                     <button
-                      onClick={addHeader}
-                      className="text-[10px] text-purple-400 hover:text-purple-300"
+                      onClick={handleRunTest}
+                      disabled={!!progress}
+                      className="w-full py-1.5 rounded-lg bg-purple-500/15 border border-purple-500/20 text-purple-300 text-xs font-medium hover:bg-purple-500/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                     >
-                      + Add header
+                      {progress ?? "Run Split Comparison"}
                     </button>
-                  </div>
-                  <div className="space-y-1">
-                    {headers.map((h, idx) => (
-                      <div key={idx} className="flex items-center gap-1">
-                        <input
-                          type="text"
-                          value={h.key}
-                          onChange={(e) => updateHeader(idx, "key", e.target.value)}
-                          placeholder="Header name"
-                          className="flex-1 px-2 py-1 rounded bg-zinc-800/80 border border-white/10 text-[11px] text-zinc-300 placeholder:text-zinc-600 focus:outline-none focus:border-purple-500/40"
-                        />
-                        <input
-                          type="text"
-                          value={h.value}
-                          onChange={(e) => updateHeader(idx, "value", e.target.value)}
-                          placeholder="Value"
-                          className="flex-1 px-2 py-1 rounded bg-zinc-800/80 border border-white/10 text-[11px] text-zinc-300 placeholder:text-zinc-600 focus:outline-none focus:border-purple-500/40"
-                        />
-                        {headers.length > 1 && (
-                          <button
-                            onClick={() => removeHeader(idx)}
-                            className="text-zinc-600 hover:text-zinc-400 text-xs px-1"
-                          >
-                            &times;
-                          </button>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                  </>
+                )}
 
-                <button
-                  onClick={handleRunTest}
-                  disabled={!endpoint.trim() || !!progress}
-                  className="w-full py-1.5 rounded-lg bg-purple-500/15 border border-purple-500/20 text-purple-300 text-xs font-medium hover:bg-purple-500/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  {progress ? progress : "Run Test"}
-                </button>
-
-                {/* Live test results */}
                 {liveError && !liveResult && (
                   <div className="px-2.5 py-2 rounded-lg bg-red-500/10 border border-red-500/20">
                     <p className="text-[11px] text-red-400">{liveError}</p>

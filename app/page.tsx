@@ -43,6 +43,7 @@ import {
 import { generateSplitOptions } from "@/lib/query-splitter";
 import { verifySplitCoverage } from "@/lib/split-verifier";
 import { SplitVerificationPanel } from "@/components/SplitVerificationPanel";
+import { EndpointConfig } from "@/components/EndpointConfig";
 
 const EXAMPLE_QUERY = `query GetArticles($locale: Locale!, $first: Int) {
   articles(locales: [$locale], first: $first) {
@@ -100,6 +101,10 @@ export default function QueryOptimizerPage() {
   interface QueryTab { label: string; query: string }
   const [queryTabs, setQueryTabs] = useState<QueryTab[]>([]);
   const [activeTabIdx, setActiveTabIdx] = useState(0);
+
+  // Endpoint config (shared between EndpointConfig and SplitVerificationPanel)
+  const [endpoint, setEndpoint] = useState("");
+  const [authToken, setAuthToken] = useState("");
 
   const handleEditorMount = useCallback((editor: MonacoEditorInstance) => {
     editorRef.current = editor;
@@ -614,6 +619,8 @@ export default function QueryOptimizerPage() {
                 verification={splitVerification}
                 queryTabs={queryTabs}
                 variables={variables}
+                endpoint={endpoint}
+                authToken={authToken}
               />
             )}
             <QueryEditor value={query} onChange={setQuery} height="420px" onEditorMount={handleEditorMount} />
@@ -622,6 +629,14 @@ export default function QueryOptimizerPage() {
               onChange={setVariables}
               height="140px"
               error={variablesError}
+            />
+            <EndpointConfig
+              endpoint={endpoint}
+              onEndpointChange={setEndpoint}
+              authToken={authToken}
+              onAuthTokenChange={setAuthToken}
+              query={query}
+              variables={variables}
             />
 
             <div className="flex gap-2">
