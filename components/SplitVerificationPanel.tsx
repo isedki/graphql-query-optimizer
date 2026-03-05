@@ -236,38 +236,6 @@ export function SplitVerificationPanel({
             )}
           </div>
 
-          {/* Diff table */}
-          {liveResult.differences.length > 0 && (
-            <div>
-              <p className="text-[11px] font-medium text-red-400 mb-1">
-                {liveResult.differences.length} Difference{liveResult.differences.length > 1 ? "s" : ""}
-              </p>
-              <div className="space-y-1 max-h-[250px] overflow-y-auto custom-scrollbar">
-                {liveResult.differences.map((diff, idx) => (
-                  <div
-                    key={idx}
-                    className="px-2 py-1.5 rounded bg-red-500/5 border border-red-500/10 text-[11px]"
-                  >
-                    <code className="text-zinc-300 font-medium">{diff.path}</code>
-                    <div className="flex gap-4 mt-0.5">
-                      <span className="text-zinc-500">
-                        original:{" "}
-                        <span className="text-emerald-400">
-                          {JSON.stringify(diff.original)?.slice(0, 80) ?? "undefined"}
-                        </span>
-                      </span>
-                      <span className="text-zinc-500">
-                        split:{" "}
-                        <span className="text-red-400">
-                          {JSON.stringify(diff.split)?.slice(0, 80) ?? "undefined"}
-                        </span>
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       )}
     </div>

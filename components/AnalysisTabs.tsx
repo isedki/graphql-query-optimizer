@@ -12,13 +12,21 @@ export interface TabDef {
 
 interface AnalysisTabsProps {
   tabs: TabDef[];
+  defaultActiveId?: string;
 }
 
-export function AnalysisTabs({ tabs }: AnalysisTabsProps) {
+export function AnalysisTabs({ tabs, defaultActiveId }: AnalysisTabsProps) {
   const [activeId, setActiveId] = useState<string>(() => {
+    if (defaultActiveId) return defaultActiveId;
     const firstWithIssues = tabs.find((t) => (t.badge ?? 0) > 0);
     return firstWithIssues?.id ?? tabs[0]?.id ?? "";
   });
+
+  useEffect(() => {
+    if (defaultActiveId) {
+      setActiveId(defaultActiveId);
+    }
+  }, [defaultActiveId]);
 
   useEffect(() => {
     if (!tabs.find((t) => t.id === activeId)) {

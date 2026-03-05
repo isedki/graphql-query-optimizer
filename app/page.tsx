@@ -42,7 +42,10 @@ import {
 } from "@/lib/query-graph";
 import { generateSplitOptions } from "@/lib/query-splitter";
 import { SplitVerificationPanel } from "@/components/SplitVerificationPanel";
-import { EndpointConfig } from "@/components/EndpointConfig";
+import {
+  runQueryAgainstEndpoint,
+  type SingleQueryResult,
+} from "@/lib/split-verifier";
 
 const EXAMPLE_QUERY = `query GetArticles($locale: Locale!, $first: Int) {
   articles(locales: [$locale], first: $first) {
@@ -94,7 +97,7 @@ export default function QueryOptimizerPage() {
   const [initialized, setInitialized] = useState(false);
   const [copied, setCopied] = useState(false);
   const [copiedTab, setCopiedTab] = useState<number | "all" | null>(null);
-  const [showFeatures, setShowFeatures] = useState(true);
+  const [showFeatures, setShowFeatures] = useState(false);
   const editorRef = useRef<MonacoEditorInstance | null>(null);
 
   // Split-tab state
@@ -102,9 +105,12 @@ export default function QueryOptimizerPage() {
   const [queryTabs, setQueryTabs] = useState<QueryTab[]>([]);
   const [activeTabIdx, setActiveTabIdx] = useState(0);
 
-  // Endpoint config (shared between EndpointConfig and SplitVerificationPanel)
+  // Endpoint config
   const [endpoint, setEndpoint] = useState("");
   const [authToken, setAuthToken] = useState("");
+  const [runResult, setRunResult] = useState<SingleQueryResult | null>(null);
+  const [runProgress, setRunProgress] = useState<string | null>(null);
+  const [showRunResponse, setShowRunResponse] = useState(false);
 
   const handleEditorMount = useCallback((editor: MonacoEditorInstance) => {
     editorRef.current = editor;
@@ -414,6 +420,20 @@ export default function QueryOptimizerPage() {
     });
   }, [queryTabs]);
 
+  const handleRunQuery = useCallback(async () => {
+    if (!endpoint.trim() || !query.trim()) return;
+    setRunResult(null);
+    setRunProgress("Running...");
+    const parsedVars: Record<string, unknown> = (() => {
+      try { return JSON.parse(variables); } catch { return {}; }
+    })();
+    const headers: Record<string, string> = {};
+    if (authToken.trim()) headers["Authorization"] = `Bearer ${authToken.trim()}`;
+    const res = await runQueryAgainstEndpoint(endpoint.trim(), headers, query, parsedVars, setRunProgress);
+    setRunResult(res);
+    setRunProgress(null);
+  }, [endpoint, authToken, query, variables]);
+
   const variablesError = useMemo(() => {
     if (!variables.trim()) return undefined;
     try {
@@ -535,72 +555,125 @@ export default function QueryOptimizerPage() {
         <QuerySummaryCard analysis={analysis} tree={tree} ast={ast} />
       ),
     },
+    ...(queryTabs.length > 0
+      ? [
+          {
+            id: "splitTest",
+            label: "Split Test",
+            badge: queryTabs.length - 1,
+            content: (
+              <SplitVerificationPanel
+                queryTabs={queryTabs}
+                variables={variables}
+                endpoint={endpoint}
+                authToken={authToken}
+              />
+            ),
+          },
+        ]
+      : []),
   ];
 
+  const splitTestActiveTab = queryTabs.length > 0 ? "splitTest" : undefined;
+
   return (
-    <main className="min-h-screen py-6 px-4 hygraph-bg">
-      <div className="max-w-[1600px] mx-auto">
-        {/* Header */}
-        <div className="mb-4">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <div>
-              <h1 className="text-3xl font-bold gradient-text mb-1">
+    <main className="h-screen flex flex-col hygraph-bg overflow-hidden">
+      {/* Header with Endpoint */}
+      <div className="shrink-0 px-4 pt-4 pb-2">
+        <div className="max-w-[1600px] mx-auto">
+          <div className="flex items-center justify-between gap-4">
+            <div className="shrink-0">
+              <h1 className="text-2xl font-bold gradient-text">
                 GraphQL Query Optimizer
               </h1>
-              <p className="text-zinc-400 text-sm">
+              <p className="text-zinc-500 text-xs">
                 Visualize, analyze, and optimize your GraphQL queries
               </p>
             </div>
-          </div>
-        </div>
 
-        {/* Feature Showcase */}
-        <div className="mb-4">
-          <button
-            onClick={() => setShowFeatures(!showFeatures)}
-            className="flex items-center gap-2 text-xs text-zinc-500 hover:text-zinc-400 transition-colors mb-2"
-          >
-            <ChevronIcon
-              className={`w-3 h-3 transition-transform ${showFeatures ? "rotate-90" : ""}`}
-            />
-            <span className="uppercase tracking-wider font-medium">
-              What this tool does
-            </span>
-          </button>
-          {showFeatures && (
-            <div className="flex flex-wrap gap-2">
-              {FEATURES.map((f) => (
-                <span
-                  key={f.label}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-zinc-800/60 border border-white/5 text-xs text-zinc-400"
+            <div className="flex items-center gap-2 min-w-0">
+              <input
+                type="text"
+                value={endpoint}
+                onChange={(e) => setEndpoint(e.target.value)}
+                placeholder="Content API Endpoint"
+                className="w-[260px] px-2.5 py-1.5 rounded-md bg-zinc-800/80 border border-white/10 text-xs text-zinc-300 placeholder:text-zinc-600 focus:outline-none focus:border-purple-500/40 truncate"
+              />
+              <input
+                type="password"
+                value={authToken}
+                onChange={(e) => setAuthToken(e.target.value)}
+                placeholder="Auth Token"
+                className="w-[160px] px-2.5 py-1.5 rounded-md bg-zinc-800/80 border border-white/10 text-xs text-zinc-300 placeholder:text-zinc-600 focus:outline-none focus:border-purple-500/40"
+              />
+              <div className="relative">
+                <button
+                  onClick={handleRunQuery}
+                  disabled={!endpoint.trim() || !query.trim() || !!runProgress}
+                  className="px-3 py-1.5 rounded-md bg-purple-500/15 border border-purple-500/20 text-purple-300 text-xs font-medium hover:bg-purple-500/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
                 >
-                  <FeatureIcon name={f.icon} />
-                  {f.label}
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Parse Error */}
-        {analysis.error && !analysis.isValid && (
-          <div className="mb-4 p-3 rounded-xl bg-red-500/10 border border-red-500/20">
-            <div className="flex items-start gap-3">
-              <ErrorIcon className="w-5 h-5 text-red-400 mt-0.5 shrink-0" />
-              <div>
-                <p className="text-sm font-medium text-red-400">Parse Error</p>
-                <p className="text-xs text-zinc-400 mt-1">{analysis.error}</p>
+                  {runProgress ?? "Run"}
+                </button>
+                {runResult && (
+                  <button
+                    onClick={() => setShowRunResponse(!showRunResponse)}
+                    className={`ml-1 text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                      runResult.error
+                        ? "bg-red-500/15 text-red-400"
+                        : "bg-emerald-500/15 text-emerald-400"
+                    }`}
+                  >
+                    {runResult.error ? "Error" : `${runResult.durationMs}ms`}
+                  </button>
+                )}
+                {showRunResponse && runResult && (
+                  <div className="absolute right-0 top-full mt-1 z-50 w-[400px] max-h-[350px] rounded-lg bg-zinc-900 border border-white/10 shadow-xl overflow-hidden">
+                    <div className="px-3 py-2 border-b border-white/5 flex items-center justify-between">
+                      <span className="text-[11px] text-zinc-400 font-medium">
+                        {runResult.error ? "Error" : `Success - ${runResult.durationMs}ms - ${formatHeaderBytes(runResult.responseSize)}`}
+                      </span>
+                      <button
+                        onClick={() => setShowRunResponse(false)}
+                        className="text-zinc-500 hover:text-zinc-300 text-xs"
+                      >
+                        &times;
+                      </button>
+                    </div>
+                    <pre className="text-[10px] text-zinc-400 p-2 overflow-auto max-h-[300px] custom-scrollbar whitespace-pre-wrap break-all">
+                      {runResult.error
+                        ? runResult.error
+                        : JSON.stringify(runResult.response, null, 2)}
+                    </pre>
+                  </div>
+                )}
               </div>
             </div>
           </div>
-        )}
+        </div>
+      </div>
 
-        {/* Main Grid: Input + Visualizer */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-          {/* Left Column: Editors */}
-          <div className="space-y-3">
+      {/* Parse Error */}
+      {analysis.error && !analysis.isValid && (
+        <div className="shrink-0 px-4">
+          <div className="max-w-[1600px] mx-auto mb-2 p-2.5 rounded-xl bg-red-500/10 border border-red-500/20">
+            <div className="flex items-start gap-3">
+              <ErrorIcon className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
+              <div>
+                <p className="text-sm font-medium text-red-400">Parse Error</p>
+                <p className="text-xs text-zinc-400 mt-0.5">{analysis.error}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Hero Grid: Editor + Tree View */}
+      <div className="flex-1 min-h-0 px-4 pb-2">
+        <div className="max-w-[1600px] mx-auto h-full grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* Left Column: Editor area */}
+          <div className="overflow-y-auto custom-scrollbar space-y-2 pr-1">
             {queryTabs.length > 0 && (
-              <div className="flex items-center gap-1 bg-zinc-900/60 rounded-lg p-1 border border-white/5 overflow-x-auto custom-scrollbar flex-nowrap">
+              <div className="flex items-center gap-1 bg-zinc-900/60 rounded-lg p-1 border border-white/5 overflow-x-auto custom-scrollbar flex-nowrap shrink-0">
                 {queryTabs.map((tab, idx) => (
                   <div key={idx} className="shrink-0 flex items-center gap-0.5">
                     <button
@@ -652,14 +725,6 @@ export default function QueryOptimizerPage() {
                 </div>
               </div>
             )}
-            {queryTabs.length > 0 && (
-              <SplitVerificationPanel
-                queryTabs={queryTabs}
-                variables={variables}
-                endpoint={endpoint}
-                authToken={authToken}
-              />
-            )}
             <QueryEditor value={query} onChange={setQuery} height="420px" onEditorMount={handleEditorMount} />
             <VariablesEditor
               value={variables}
@@ -667,37 +732,28 @@ export default function QueryOptimizerPage() {
               height="140px"
               error={variablesError}
             />
-            <EndpointConfig
-              endpoint={endpoint}
-              onEndpointChange={setEndpoint}
-              authToken={authToken}
-              onAuthTokenChange={setAuthToken}
-              query={query}
-              variables={variables}
-            />
-
             <div className="flex gap-2">
               <button
                 onClick={handleCopyQuery}
-                className="flex-1 py-2 rounded-lg bg-zinc-800/80 border border-white/10 text-zinc-300 text-sm font-medium hover:bg-zinc-700/80 transition-colors flex items-center justify-center gap-2"
+                className="flex-1 py-1.5 rounded-lg bg-zinc-800/80 border border-white/10 text-zinc-300 text-xs font-medium hover:bg-zinc-700/80 transition-colors flex items-center justify-center gap-2"
               >
-                <ClipboardIcon className="w-4 h-4" />
+                <ClipboardIcon className="w-3.5 h-3.5" />
                 {copied ? "Copied!" : "Copy Query"}
               </button>
               {regeneratedQuery && (
                 <button
                   onClick={handleApplySelection}
-                  className="flex-1 py-2 rounded-lg bg-purple-500/20 border border-purple-500/30 text-purple-300 text-sm font-medium hover:bg-purple-500/30 transition-colors"
+                  className="flex-1 py-1.5 rounded-lg bg-purple-500/20 border border-purple-500/30 text-purple-300 text-xs font-medium hover:bg-purple-500/30 transition-colors"
                 >
-                  Apply Selection ({selectedIds.size}/{totalNodeCount} nodes)
+                  Apply Selection ({selectedIds.size}/{totalNodeCount})
                 </button>
               )}
             </div>
           </div>
 
-          {/* Right Column: Visualizer */}
-          <div className="rounded-xl border border-white/10 overflow-hidden bg-zinc-950/50">
-            <div className="flex items-center gap-2 px-3 py-2 border-b border-white/5 bg-zinc-900/50">
+          {/* Right Column: Tree View */}
+          <div className="rounded-xl border border-white/10 overflow-hidden bg-zinc-950/50 flex flex-col min-h-0">
+            <div className="flex items-center gap-2 px-3 py-2 border-b border-white/5 bg-zinc-900/50 shrink-0">
               <span className="px-3 py-1 rounded text-xs font-medium bg-purple-500/20 text-purple-300">
                 Tree View
               </span>
@@ -705,8 +761,7 @@ export default function QueryOptimizerPage() {
                 Shift+click to select/deselect subtree
               </span>
             </div>
-
-            <div style={{ height: "800px" }}>
+            <div className="flex-1 min-h-0">
               <QueryTreeView
                 roots={tree}
                 selectedIds={selectedIds}
@@ -717,57 +772,90 @@ export default function QueryOptimizerPage() {
             </div>
           </div>
         </div>
+      </div>
 
-        {/* Metrics Bar + Quick Actions */}
-        <div className="mb-4 space-y-3">
-          <MetricsBar
-            totalSize={analysis.payload.totalSize}
-            complexity={analysis.complexity}
-            selectedCount={selectedIds.size}
-            totalCount={totalNodeCount}
-            isValid={analysis.isValid}
-            operationName={analysis.operationName}
-            operationType={analysis.operationType}
-            localeCount={localeNames.length}
-            localeNames={localeNames}
-            variableCount={analysis.variables.length}
-            fragmentCount={fragmentCount}
-            issueCount={detectionBadge + analysisBadge}
-          />
-          {analysis.isValid && (
-            <QuickActions
-              safeSystemFieldCount={safeSystemFieldNames.length}
-              onRemoveSystemFields={() => handleRemoveSystemFields(safeSystemFieldNames)}
-              richTextFixCount={richTextOverfetches.length}
-              onFixRichText={() => handleRemoveRichTextFormats(richTextFormatsToRemove)}
-              fragmentCount={fragmentSuggestions.length}
-              onExtractFragments={() => handleExtractFragments(fragmentSuggestions)}
-              paginationIssueCount={paginationIssues.length}
-              onFixPagination={handleFixAllPagination}
-            />
-          )}
-        </div>
+      {/* Below-the-fold: scrollable */}
+      <div className="shrink-0 max-h-[50vh] overflow-y-auto custom-scrollbar">
+        <div className="px-4">
+          <div className="max-w-[1600px] mx-auto space-y-3 py-3">
+            {/* Metrics Bar + Quick Actions (sticky within scroll area) */}
+            <div className="sticky top-0 z-10 space-y-2 py-1 bg-[#09090b]/90 backdrop-blur-sm -mx-1 px-1">
+              <MetricsBar
+                totalSize={analysis.payload.totalSize}
+                complexity={analysis.complexity}
+                selectedCount={selectedIds.size}
+                totalCount={totalNodeCount}
+                isValid={analysis.isValid}
+                operationName={analysis.operationName}
+                operationType={analysis.operationType}
+                localeCount={localeNames.length}
+                localeNames={localeNames}
+                variableCount={analysis.variables.length}
+                fragmentCount={fragmentCount}
+                issueCount={detectionBadge + analysisBadge}
+              />
+              {analysis.isValid && (
+                <QuickActions
+                  safeSystemFieldCount={safeSystemFieldNames.length}
+                  onRemoveSystemFields={() => handleRemoveSystemFields(safeSystemFieldNames)}
+                  richTextFixCount={richTextOverfetches.length}
+                  onFixRichText={() => handleRemoveRichTextFormats(richTextFormatsToRemove)}
+                  fragmentCount={fragmentSuggestions.length}
+                  onExtractFragments={() => handleExtractFragments(fragmentSuggestions)}
+                  paginationIssueCount={paginationIssues.length}
+                  onFixPagination={handleFixAllPagination}
+                />
+              )}
+            </div>
 
-        {/* Tabbed Analysis Panel */}
-        {analysis.isValid && (
-          <div className="mb-4">
-            <AnalysisTabs tabs={tabs} />
+            {/* Tabbed Analysis Panel */}
+            {analysis.isValid && (
+              <AnalysisTabs tabs={tabs} defaultActiveId={splitTestActiveTab} />
+            )}
+
+            {/* Feature Showcase */}
+            <div className="pt-2">
+              <button
+                onClick={() => setShowFeatures(!showFeatures)}
+                className="flex items-center gap-2 text-xs text-zinc-500 hover:text-zinc-400 transition-colors mb-2"
+              >
+                <ChevronIcon
+                  className={`w-3 h-3 transition-transform ${showFeatures ? "rotate-90" : ""}`}
+                />
+                <span className="uppercase tracking-wider font-medium">
+                  What this tool does
+                </span>
+              </button>
+              {showFeatures && (
+                <div className="flex flex-wrap gap-2">
+                  {FEATURES.map((f) => (
+                    <span
+                      key={f.label}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-zinc-800/60 border border-white/5 text-xs text-zinc-400"
+                    >
+                      <FeatureIcon name={f.icon} />
+                      {f.label}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="text-center pb-2">
+              <p className="text-xs text-zinc-500">
+                Based on{" "}
+                <a
+                  href="https://hygraph.com/docs/api-reference/basics/api-limits"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-purple-400 hover:text-purple-300 underline"
+                >
+                  Hygraph API Limits documentation
+                </a>
+              </p>
+            </div>
           </div>
-        )}
-
-        {/* Footer */}
-        <div className="mt-6 text-center">
-          <p className="text-xs text-zinc-500">
-            Based on{" "}
-            <a
-              href="https://hygraph.com/docs/api-reference/basics/api-limits"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-purple-400 hover:text-purple-300 underline"
-            >
-              Hygraph API Limits documentation
-            </a>
-          </p>
         </div>
       </div>
     </main>
@@ -878,6 +966,12 @@ function ErrorIcon({ className }: { className?: string }) {
       <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
     </svg>
   );
+}
+
+function formatHeaderBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function ClipboardIcon({ className }: { className?: string }) {

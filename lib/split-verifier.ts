@@ -254,11 +254,62 @@ export function classifySplitQueries(
 // Deep merge + diff
 // ---------------------------------------------------------------------------
 
+function isIdArray(arr: unknown[]): arr is Record<string, unknown>[] {
+  if (arr.length === 0) return false;
+  return arr.every(
+    (item) => item !== null && typeof item === "object" && !Array.isArray(item) && "id" in (item as Record<string, unknown>)
+  );
+}
+
+function mergeById(target: Record<string, unknown>[], source: Record<string, unknown>[]): Record<string, unknown>[] {
+  const byId = new Map<string, Record<string, unknown>>();
+  const order: string[] = [];
+
+  for (const item of target) {
+    const id = String(item.id);
+    if (!byId.has(id)) order.push(id);
+    byId.set(id, item);
+  }
+
+  for (const item of source) {
+    const id = String(item.id);
+    const existing = byId.get(id);
+    if (existing) {
+      byId.set(id, deepMergeObjects(existing, item));
+    } else {
+      order.push(id);
+      byId.set(id, item);
+    }
+  }
+
+  return order.map((id) => byId.get(id)!);
+}
+
+function deepMergeObjects(target: Record<string, unknown>, source: Record<string, unknown>): Record<string, unknown> {
+  const targetKeyCount = Object.keys(target).length;
+  const sourceKeyCount = Object.keys(source).length;
+  if (sourceKeyCount <= targetKeyCount && targetKeyCount > 2) return target;
+  if (targetKeyCount <= 2 && sourceKeyCount > 2) return source;
+
+  const merged: Record<string, unknown> = { ...target };
+  for (const key of Object.keys(source)) {
+    if (key in merged) {
+      merged[key] = deepMerge(merged[key], source[key]);
+    } else {
+      merged[key] = source[key];
+    }
+  }
+  return merged;
+}
+
 function deepMerge(target: unknown, source: unknown): unknown {
   if (source === null || source === undefined) return target;
   if (target === null || target === undefined) return source;
 
   if (Array.isArray(target) && Array.isArray(source)) {
+    if (isIdArray(target) && isIdArray(source)) {
+      return mergeById(target, source);
+    }
     return [...target, ...source];
   }
 
@@ -306,15 +357,44 @@ function computeDiff(
   }
 
   if (Array.isArray(original) && Array.isArray(split)) {
-    const maxLen = Math.max(original.length, split.length);
-    for (let i = 0; i < maxLen; i++) {
-      const childPath = currentPath ? `${currentPath}[${i}]` : `[${i}]`;
-      if (i >= original.length) {
-        diffs.push({ path: childPath, original: undefined, split: split[i] });
-      } else if (i >= split.length) {
-        diffs.push({ path: childPath, original: original[i], split: undefined });
-      } else {
-        diffs.push(...computeDiff(original[i], split[i], childPath));
+    if (isIdArray(original) && isIdArray(split)) {
+      const origById = new Map<string, Record<string, unknown>>();
+      for (const item of original) origById.set(String(item.id), item);
+      const splitById = new Map<string, Record<string, unknown>>();
+      for (const item of split) splitById.set(String(item.id), item);
+
+      const allIds = new Set([...Array.from(origById.keys()), ...Array.from(splitById.keys())]);
+      allIds.forEach((id) => {
+        const childPath = currentPath ? `${currentPath}[id=${id}]` : `[id=${id}]`;
+        const origItem = origById.get(id);
+        const splitItem = splitById.get(id);
+        if (!origItem) {
+          diffs.push({ path: childPath, original: undefined, split: splitItem });
+        } else if (!splitItem) {
+          diffs.push({ path: childPath, original: origItem, split: undefined });
+        } else {
+          diffs.push(...computeDiff(origItem, splitItem, childPath));
+        }
+      });
+
+      if (original.length !== split.length) {
+        diffs.push({
+          path: `${currentPath || "(root)"}.length`,
+          original: original.length,
+          split: split.length,
+        });
+      }
+    } else {
+      const maxLen = Math.max(original.length, split.length);
+      for (let i = 0; i < maxLen; i++) {
+        const childPath = currentPath ? `${currentPath}[${i}]` : `[${i}]`;
+        if (i >= original.length) {
+          diffs.push({ path: childPath, original: undefined, split: split[i] });
+        } else if (i >= split.length) {
+          diffs.push({ path: childPath, original: original[i], split: undefined });
+        } else {
+          diffs.push(...computeDiff(original[i], split[i], childPath));
+        }
       }
     }
     return diffs;
