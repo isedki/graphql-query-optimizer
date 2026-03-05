@@ -2,8 +2,11 @@ import {
   DocumentNode,
   OperationDefinitionNode,
   FragmentDefinitionNode,
+  SelectionSetNode,
   Kind,
+  parse,
   print,
+  visit,
 } from "graphql";
 import { QueryTreeNode } from "./query-graph";
 
@@ -108,7 +111,61 @@ function appendFragmentDefs(
       result += "\n\n" + print(def);
     }
   }
-  return result;
+  return stripUnusedFragments(result);
+}
+
+function stripUnusedFragments(query: string): string {
+  let ast: DocumentNode;
+  try {
+    ast = parse(query);
+  } catch {
+    return query;
+  }
+
+  const fragDefs = new Map<string, FragmentDefinitionNode>();
+  for (const def of ast.definitions) {
+    if (def.kind === Kind.FRAGMENT_DEFINITION) {
+      fragDefs.set(def.name.value, def);
+    }
+  }
+  if (fragDefs.size === 0) return query;
+
+  const used = new Set<string>();
+  function walkSelections(sels: SelectionSetNode["selections"]) {
+    for (const sel of sels) {
+      if (sel.kind === Kind.FRAGMENT_SPREAD) {
+        const name = sel.name.value;
+        if (!used.has(name)) {
+          used.add(name);
+          const frag = fragDefs.get(name);
+          if (frag?.selectionSet) walkSelections(frag.selectionSet.selections);
+        }
+      } else if (sel.kind === Kind.FIELD && sel.selectionSet) {
+        walkSelections(sel.selectionSet.selections);
+      } else if (sel.kind === Kind.INLINE_FRAGMENT && sel.selectionSet) {
+        walkSelections(sel.selectionSet.selections);
+      }
+    }
+  }
+
+  for (const def of ast.definitions) {
+    if (def.kind === Kind.OPERATION_DEFINITION && def.selectionSet) {
+      walkSelections(def.selectionSet.selections);
+    }
+  }
+
+  if (used.size === fragDefs.size) return query;
+
+  const cleaned = visit(ast, {
+    FragmentDefinition: {
+      enter(node) {
+        if (!used.has(node.name.value)) return null;
+        return undefined;
+      },
+    },
+  });
+
+  return print(cleaned);
 }
 
 function generateRootFieldSplit(

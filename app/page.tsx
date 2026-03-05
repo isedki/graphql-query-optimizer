@@ -41,7 +41,6 @@ import {
   QueryTreeNode,
 } from "@/lib/query-graph";
 import { generateSplitOptions } from "@/lib/query-splitter";
-import { verifySplitCoverage } from "@/lib/split-verifier";
 import { SplitVerificationPanel } from "@/components/SplitVerificationPanel";
 import { EndpointConfig } from "@/components/EndpointConfig";
 
@@ -245,16 +244,6 @@ export default function QueryOptimizerPage() {
     if (!ast) return [];
     return generateSplitOptions(ast, tree, analysis.payload.totalSize);
   }, [ast, tree, analysis.payload.totalSize]);
-
-  const splitVerification = useMemo(() => {
-    if (queryTabs.length < 2) return null;
-    const originalQuery = queryTabs[0].query;
-    const splitQueries = queryTabs.slice(1).map((t) => ({
-      name: t.label,
-      query: t.query,
-    }));
-    return verifySplitCoverage(originalQuery, splitQueries);
-  }, [queryTabs]);
 
   const regeneratedQuery = useMemo(() => {
     if (!initialized || !ast || tree.length === 0) return null;
@@ -591,12 +580,12 @@ export default function QueryOptimizerPage() {
           {/* Left Column: Editors */}
           <div className="space-y-3">
             {queryTabs.length > 0 && (
-              <div className="flex items-center gap-1 bg-zinc-900/60 rounded-lg p-1 border border-white/5">
+              <div className="flex items-center gap-1 bg-zinc-900/60 rounded-lg p-1 border border-white/5 overflow-x-auto custom-scrollbar flex-nowrap">
                 {queryTabs.map((tab, idx) => (
                   <button
                     key={idx}
                     onClick={() => handleTabSwitch(idx)}
-                    className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                    className={`shrink-0 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
                       idx === activeTabIdx
                         ? "bg-purple-500/20 text-purple-300 border border-purple-500/30"
                         : "text-zinc-400 hover:text-zinc-300 hover:bg-white/5 border border-transparent"
@@ -607,7 +596,7 @@ export default function QueryOptimizerPage() {
                 ))}
                 <button
                   onClick={handleCloseTabs}
-                  className="ml-auto px-2 py-1.5 text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors"
+                  className="shrink-0 ml-auto px-2 py-1.5 text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors"
                   title="Close split view"
                 >
                   &times; Close
@@ -616,7 +605,6 @@ export default function QueryOptimizerPage() {
             )}
             {queryTabs.length > 0 && (
               <SplitVerificationPanel
-                verification={splitVerification}
                 queryTabs={queryTabs}
                 variables={variables}
                 endpoint={endpoint}

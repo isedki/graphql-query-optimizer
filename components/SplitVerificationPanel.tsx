@@ -1,15 +1,10 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import type {
-  SplitVerification,
-  LiveTestResult,
-  TestConfig,
-} from "@/lib/split-verifier";
+import type { LiveTestResult, TestConfig } from "@/lib/split-verifier";
 import { testSplitAgainstEndpoint } from "@/lib/split-verifier";
 
 interface SplitVerificationPanelProps {
-  verification: SplitVerification | null;
   queryTabs: { label: string; query: string }[];
   variables: string;
   endpoint: string;
@@ -17,18 +12,24 @@ interface SplitVerificationPanelProps {
 }
 
 export function SplitVerificationPanel({
-  verification,
   queryTabs,
   variables,
   endpoint,
   authToken,
 }: SplitVerificationPanelProps) {
-  const [expanded, setExpanded] = useState(false);
-  const [showLiveTest, setShowLiveTest] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
   const [liveResult, setLiveResult] = useState<LiveTestResult | null>(null);
   const [liveError, setLiveError] = useState<string | null>(null);
-  const [showResponses, setShowResponses] = useState(false);
+  const [expandedResponses, setExpandedResponses] = useState<Set<string>>(new Set());
+
+  const toggleResponse = useCallback((name: string) => {
+    setExpandedResponses((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }, []);
 
   const handleRunTest = useCallback(async () => {
     if (!endpoint.trim()) return;
@@ -75,321 +76,187 @@ export function SplitVerificationPanel({
     }
   }, [endpoint, authToken, queryTabs, variables]);
 
-  if (!verification) return null;
-
-  const { coveragePercent, isFullyCovered, missingPaths, extraPaths, duplicates } =
-    verification;
+  const splitCount = queryTabs.length - 1;
 
   return (
-    <div className="rounded-lg border border-white/5 bg-zinc-900/60 px-3 py-2">
-      {/* Badges row */}
+    <div className="rounded-lg border border-white/5 bg-zinc-900/60 px-3 py-2 space-y-2">
+      {/* Header + Run button */}
       <div className="flex items-center gap-2 flex-wrap">
-        <button
-          onClick={() => setExpanded(!expanded)}
-          className="flex items-center gap-1.5 text-xs font-medium hover:opacity-80 transition-opacity"
-        >
-          <ChevronIcon
-            className={`w-3 h-3 text-zinc-500 transition-transform ${expanded ? "rotate-90" : ""}`}
-          />
-          <VerifyIcon className="w-3.5 h-3.5 text-zinc-400" />
-          <span className="text-zinc-400">Split Verification</span>
-        </button>
-
-        <span
-          className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
-            isFullyCovered
-              ? "bg-emerald-500/15 text-emerald-400"
-              : "bg-amber-500/15 text-amber-400"
-          }`}
-        >
-          {coveragePercent}% field coverage
-          {!isFullyCovered && ` — ${missingPaths.length} missing`}
-        </span>
-
-        {extraPaths.length > 0 && (
-          <span className="text-[10px] px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-400 font-medium">
-            {extraPaths.length} extra
+        <div className="flex items-center gap-1.5">
+          <TestIcon className="w-3.5 h-3.5 text-purple-400" />
+          <span className="text-xs font-medium text-zinc-300">
+            Split Test
           </span>
-        )}
-
-        {duplicates.length > 0 && (
-          <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-400 font-medium">
-            {duplicates.length} cross-split duplicate{duplicates.length > 1 ? "s" : ""}
+          <span className="text-[10px] text-zinc-500">
+            {splitCount} quer{splitCount > 1 ? "ies" : "y"}
           </span>
-        )}
+        </div>
 
-        {!expanded && !showLiveTest && (
-          <button
-            onClick={() => {
-              setShowLiveTest(true);
-              setExpanded(true);
-            }}
-            className="ml-auto text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 hover:text-zinc-300 hover:bg-zinc-700 transition-colors border border-white/5"
+        {liveResult && (
+          <span
+            className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
+              liveResult.isIdentical
+                ? "bg-emerald-500/15 text-emerald-400"
+                : "bg-red-500/15 text-red-400"
+            }`}
           >
-            Test against endpoint
-          </button>
+            {liveResult.isIdentical
+              ? "Responses match"
+              : `${liveResult.differences.length} difference${liveResult.differences.length > 1 ? "s" : ""}`}
+          </span>
         )}
+
+        <div className="ml-auto flex items-center gap-2">
+          {!endpoint.trim() ? (
+            <span className="text-[10px] text-zinc-600 italic">
+              Set endpoint below to test
+            </span>
+          ) : (
+            <button
+              onClick={handleRunTest}
+              disabled={!!progress}
+              className="px-3 py-1 rounded-md bg-purple-500/15 border border-purple-500/20 text-purple-300 text-[11px] font-medium hover:bg-purple-500/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {progress ?? "Run Split Comparison"}
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* Expandable details */}
-      {expanded && (
-        <div className="mt-3 space-y-3">
-          {/* Missing paths */}
-          {missingPaths.length > 0 && (
-            <FieldList
-              title="Missing fields"
-              subtitle="Present in original but not in any split query"
-              fields={missingPaths}
-              color="amber"
-            />
+      {/* Error */}
+      {liveError && !liveResult && (
+        <div className="px-2.5 py-2 rounded-lg bg-red-500/10 border border-red-500/20">
+          <p className="text-[11px] text-red-400 break-all">{liveError}</p>
+        </div>
+      )}
+
+      {/* Results */}
+      {liveResult && (
+        <div className="space-y-2">
+          {liveResult.error && (
+            <div className="px-2.5 py-2 rounded-lg bg-red-500/10 border border-red-500/20">
+              <p className="text-[11px] text-red-400 break-all">{liveResult.error}</p>
+            </div>
           )}
 
-          {/* Extra paths */}
-          {extraPaths.length > 0 && (
-            <FieldList
-              title="Extra fields"
-              subtitle="Present in split queries but not in original"
-              fields={extraPaths}
-              color="sky"
-            />
-          )}
+          {/* Original query result */}
+          <div className="rounded-lg border border-white/5 overflow-hidden">
+            <button
+              onClick={() => toggleResponse("__original__")}
+              className="w-full flex items-center gap-2 px-2.5 py-1.5 bg-zinc-800/40 hover:bg-zinc-800/60 transition-colors text-left"
+            >
+              <ChevronIcon
+                className={`w-3 h-3 text-zinc-500 transition-transform ${expandedResponses.has("__original__") ? "rotate-90" : ""}`}
+              />
+              <span className="text-[11px] font-medium text-emerald-400">Original</span>
+              <span className="text-[10px] text-zinc-500 ml-auto">
+                {formatBytes(JSON.stringify(liveResult.originalResponse).length)}
+              </span>
+            </button>
+            {expandedResponses.has("__original__") && (
+              <pre className="text-[10px] text-zinc-400 px-2.5 py-2 max-h-[250px] overflow-auto custom-scrollbar whitespace-pre-wrap break-all bg-zinc-950/30">
+                {JSON.stringify(liveResult.originalResponse, null, 2)}
+              </pre>
+            )}
+          </div>
 
-          {/* Duplicates */}
-          {duplicates.length > 0 && (
+          {/* Per-split query results */}
+          {liveResult.splitResponses.map((sr) => {
+            const hasError = sr.response && typeof sr.response === "object" && "error" in (sr.response as Record<string, unknown>);
+            return (
+              <div key={sr.name} className="rounded-lg border border-white/5 overflow-hidden">
+                <button
+                  onClick={() => toggleResponse(sr.name)}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 bg-zinc-800/40 hover:bg-zinc-800/60 transition-colors text-left"
+                >
+                  <ChevronIcon
+                    className={`w-3 h-3 text-zinc-500 transition-transform ${expandedResponses.has(sr.name) ? "rotate-90" : ""}`}
+                  />
+                  <span className={`text-[11px] font-medium ${hasError ? "text-red-400" : "text-purple-300"}`}>
+                    {sr.name}
+                  </span>
+                  <span className="text-[10px] text-zinc-600 truncate max-w-[150px]">
+                    {JSON.stringify(sr.variables).length > 2
+                      ? `vars: ${JSON.stringify(sr.variables).slice(0, 60)}${JSON.stringify(sr.variables).length > 60 ? "..." : ""}`
+                      : ""}
+                  </span>
+                  <span className="text-[10px] text-zinc-500 ml-auto shrink-0">
+                    {formatBytes(JSON.stringify(sr.response).length)}
+                  </span>
+                </button>
+                {expandedResponses.has(sr.name) && (
+                  <pre className="text-[10px] text-zinc-400 px-2.5 py-2 max-h-[250px] overflow-auto custom-scrollbar whitespace-pre-wrap break-all bg-zinc-950/30">
+                    {JSON.stringify(sr.response, null, 2)}
+                  </pre>
+                )}
+              </div>
+            );
+          })}
+
+          {/* Merged result */}
+          <div className="rounded-lg border border-white/5 overflow-hidden">
+            <button
+              onClick={() => toggleResponse("__merged__")}
+              className="w-full flex items-center gap-2 px-2.5 py-1.5 bg-zinc-800/40 hover:bg-zinc-800/60 transition-colors text-left"
+            >
+              <ChevronIcon
+                className={`w-3 h-3 text-zinc-500 transition-transform ${expandedResponses.has("__merged__") ? "rotate-90" : ""}`}
+              />
+              <span className="text-[11px] font-medium text-sky-400">Merged Result</span>
+              <span className="text-[10px] text-zinc-500 ml-auto">
+                {formatBytes(JSON.stringify(liveResult.mergedResponse).length)}
+              </span>
+            </button>
+            {expandedResponses.has("__merged__") && (
+              <pre className="text-[10px] text-zinc-400 px-2.5 py-2 max-h-[250px] overflow-auto custom-scrollbar whitespace-pre-wrap break-all bg-zinc-950/30">
+                {JSON.stringify(liveResult.mergedResponse, null, 2)}
+              </pre>
+            )}
+          </div>
+
+          {/* Diff table */}
+          {liveResult.differences.length > 0 && (
             <div>
-              <p className="text-[11px] font-medium text-blue-400 mb-1">
-                Cross-split duplicates
+              <p className="text-[11px] font-medium text-red-400 mb-1">
+                {liveResult.differences.length} Difference{liveResult.differences.length > 1 ? "s" : ""}
               </p>
-              <p className="text-[10px] text-zinc-500 mb-1.5">
-                Same field path fetched by multiple split queries
-              </p>
-              <div className="space-y-1 max-h-[200px] overflow-y-auto custom-scrollbar">
-                {duplicates.map((d) => (
+              <div className="space-y-1 max-h-[250px] overflow-y-auto custom-scrollbar">
+                {liveResult.differences.map((diff, idx) => (
                   <div
-                    key={d.path}
-                    className="flex items-start gap-2 px-2 py-1.5 rounded bg-blue-500/5 border border-blue-500/10"
+                    key={idx}
+                    className="px-2 py-1.5 rounded bg-red-500/5 border border-red-500/10 text-[11px]"
                   >
-                    <code className="text-[11px] text-zinc-300 break-all flex-1">
-                      {d.path}
-                    </code>
-                    <span className="text-[10px] text-blue-400 shrink-0">
-                      in {d.inQueries.join(", ")}
-                    </span>
+                    <code className="text-zinc-300 font-medium">{diff.path}</code>
+                    <div className="flex gap-4 mt-0.5">
+                      <span className="text-zinc-500">
+                        original:{" "}
+                        <span className="text-emerald-400">
+                          {JSON.stringify(diff.original)?.slice(0, 80) ?? "undefined"}
+                        </span>
+                      </span>
+                      <span className="text-zinc-500">
+                        split:{" "}
+                        <span className="text-red-400">
+                          {JSON.stringify(diff.split)?.slice(0, 80) ?? "undefined"}
+                        </span>
+                      </span>
+                    </div>
                   </div>
                 ))}
               </div>
             </div>
           )}
-
-          {isFullyCovered && missingPaths.length === 0 && extraPaths.length === 0 && duplicates.length === 0 && (
-            <p className="text-[11px] text-emerald-400">
-              All {verification.totalOriginalFields} field paths are fully covered by the split queries with no duplicates.
-            </p>
-          )}
-
-          {/* Live test section */}
-          <div className="border-t border-white/5 pt-3">
-            <button
-              onClick={() => setShowLiveTest(!showLiveTest)}
-              className="flex items-center gap-1.5 text-xs font-medium text-zinc-400 hover:text-zinc-300 transition-colors"
-            >
-              <ChevronIcon
-                className={`w-3 h-3 transition-transform ${showLiveTest ? "rotate-90" : ""}`}
-              />
-              Compare split vs original (live)
-            </button>
-
-            {showLiveTest && (
-              <div className="mt-2 space-y-2">
-                {!endpoint.trim() ? (
-                  <p className="text-[10px] text-zinc-500 italic">
-                    Configure the endpoint below the Variables editor first, then come back here to compare.
-                  </p>
-                ) : (
-                  <>
-                    <p className="text-[10px] text-zinc-500">
-                      Using endpoint: <span className="text-zinc-400">{endpoint}</span>
-                    </p>
-                    <button
-                      onClick={handleRunTest}
-                      disabled={!!progress}
-                      className="w-full py-1.5 rounded-lg bg-purple-500/15 border border-purple-500/20 text-purple-300 text-xs font-medium hover:bg-purple-500/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                    >
-                      {progress ?? "Run Split Comparison"}
-                    </button>
-                  </>
-                )}
-
-                {liveError && !liveResult && (
-                  <div className="px-2.5 py-2 rounded-lg bg-red-500/10 border border-red-500/20">
-                    <p className="text-[11px] text-red-400">{liveError}</p>
-                  </div>
-                )}
-
-                {liveResult && (
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${
-                          liveResult.isIdentical
-                            ? "bg-emerald-500/15 text-emerald-400"
-                            : "bg-red-500/15 text-red-400"
-                        }`}
-                      >
-                        {liveResult.isIdentical
-                          ? "Responses match"
-                          : `${liveResult.differences.length} difference${liveResult.differences.length > 1 ? "s" : ""} found`}
-                      </span>
-                      {liveResult.error && (
-                        <span className="text-[10px] text-red-400">
-                          {liveResult.error}
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Per-query status */}
-                    <div className="space-y-1">
-                      {liveResult.splitResponses.map((sr) => (
-                        <div
-                          key={sr.name}
-                          className="flex items-center gap-2 px-2 py-1 rounded bg-zinc-800/50 border border-white/5"
-                        >
-                          <span className="text-[11px] text-zinc-300 font-medium">
-                            {sr.name}
-                          </span>
-                          <span className="text-[10px] text-zinc-500">
-                            vars: {JSON.stringify(sr.variables).slice(0, 80)}
-                            {JSON.stringify(sr.variables).length > 80 ? "..." : ""}
-                          </span>
-                          <span className="text-[10px] text-zinc-500 ml-auto">
-                            {JSON.stringify(sr.response).length} bytes
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Diff table */}
-                    {liveResult.differences.length > 0 && (
-                      <div>
-                        <p className="text-[11px] font-medium text-red-400 mb-1">
-                          Differences
-                        </p>
-                        <div className="space-y-1 max-h-[250px] overflow-y-auto custom-scrollbar">
-                          {liveResult.differences.map((diff, idx) => (
-                            <div
-                              key={idx}
-                              className="px-2 py-1.5 rounded bg-red-500/5 border border-red-500/10 text-[11px]"
-                            >
-                              <code className="text-zinc-300 font-medium">
-                                {diff.path}
-                              </code>
-                              <div className="flex gap-4 mt-0.5">
-                                <span className="text-zinc-500">
-                                  original:{" "}
-                                  <span className="text-emerald-400">
-                                    {JSON.stringify(diff.original)?.slice(0, 60) ?? "undefined"}
-                                  </span>
-                                </span>
-                                <span className="text-zinc-500">
-                                  split:{" "}
-                                  <span className="text-red-400">
-                                    {JSON.stringify(diff.split)?.slice(0, 60) ?? "undefined"}
-                                  </span>
-                                </span>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Full response viewer */}
-                    <button
-                      onClick={() => setShowResponses(!showResponses)}
-                      className="text-[10px] text-zinc-500 hover:text-zinc-400 transition-colors"
-                    >
-                      {showResponses ? "Hide" : "Show"} full responses
-                    </button>
-                    {showResponses && (
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <p className="text-[10px] text-zinc-500 mb-1">
-                            Original response
-                          </p>
-                          <pre className="text-[10px] text-zinc-400 bg-zinc-800/50 rounded p-2 max-h-[200px] overflow-auto custom-scrollbar">
-                            {JSON.stringify(liveResult.originalResponse, null, 2)}
-                          </pre>
-                        </div>
-                        <div>
-                          <p className="text-[10px] text-zinc-500 mb-1">
-                            Merged split response
-                          </p>
-                          <pre className="text-[10px] text-zinc-400 bg-zinc-800/50 rounded p-2 max-h-[200px] overflow-auto custom-scrollbar">
-                            {JSON.stringify(liveResult.mergedResponse, null, 2)}
-                          </pre>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
         </div>
       )}
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Sub-components
-// ---------------------------------------------------------------------------
-
-function FieldList({
-  title,
-  subtitle,
-  fields,
-  color,
-}: {
-  title: string;
-  subtitle: string;
-  fields: string[];
-  color: "amber" | "sky";
-}) {
-  const colorMap = {
-    amber: {
-      title: "text-amber-400",
-      bg: "bg-amber-500/5",
-      border: "border-amber-500/10",
-    },
-    sky: {
-      title: "text-sky-400",
-      bg: "bg-sky-500/5",
-      border: "border-sky-500/10",
-    },
-  };
-  const c = colorMap[color];
-  return (
-    <div>
-      <p className={`text-[11px] font-medium ${c.title} mb-1`}>{title}</p>
-      <p className="text-[10px] text-zinc-500 mb-1.5">{subtitle}</p>
-      <div className="space-y-0.5 max-h-[200px] overflow-y-auto custom-scrollbar">
-        {fields.map((f) => (
-          <div
-            key={f}
-            className={`px-2 py-1 rounded ${c.bg} border ${c.border}`}
-          >
-            <code className="text-[11px] text-zinc-300 break-all">{f}</code>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
-
-// ---------------------------------------------------------------------------
-// Icons
-// ---------------------------------------------------------------------------
 
 function ChevronIcon({ className }: { className?: string }) {
   return (
@@ -399,10 +266,11 @@ function ChevronIcon({ className }: { className?: string }) {
   );
 }
 
-function VerifyIcon({ className }: { className?: string }) {
+function TestIcon({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
     </svg>
   );
 }
