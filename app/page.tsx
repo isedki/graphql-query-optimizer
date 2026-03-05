@@ -364,6 +364,56 @@ export default function QueryOptimizerPage() {
     } catch { /* ignore */ }
   }, [query, paginationIssues]);
 
+  // --- Apply-to-all-tabs helpers ---
+  const applyToAllTabs = useCallback(
+    (transform: (q: string) => string) => {
+      const synced = queryTabs.map((tab, idx) =>
+        idx === activeTabIdx ? { ...tab, query } : tab
+      );
+      const updated = synced.map((tab) => {
+        try {
+          return { ...tab, query: transform(tab.query) };
+        } catch {
+          return tab;
+        }
+      });
+      setQueryTabs(updated);
+      if (updated[activeTabIdx]) {
+        setQuery(updated[activeTabIdx].query);
+      }
+    },
+    [queryTabs, activeTabIdx, query]
+  );
+
+  const handleRemoveSystemFieldsAll = useCallback(() => {
+    applyToAllTabs((q) => removeFieldsByName(q, new Set(safeSystemFieldNames)));
+  }, [applyToAllTabs, safeSystemFieldNames]);
+
+  const handleRemoveRichTextFormatsAll = useCallback(() => {
+    applyToAllTabs((q) => removeFieldsByName(q, new Set(richTextFormatsToRemove)));
+  }, [applyToAllTabs, richTextFormatsToRemove]);
+
+  const handleExtractFragmentsAll = useCallback(() => {
+    applyToAllTabs((q) => {
+      const tabAst = parse(q);
+      const tabSuggestions = detectExtractableFragments(tabAst);
+      if (tabSuggestions.length === 0) return q;
+      return applyFragmentExtraction(q, tabSuggestions);
+    });
+  }, [applyToAllTabs]);
+
+  const handleFixAllPaginationAll = useCallback(() => {
+    applyToAllTabs((q) => {
+      const tabAst = parse(q);
+      const tabTree = astToTree(tabAst);
+      const tabIssues = detectUnboundedConnections(tabTree);
+      if (tabIssues.length === 0) return q;
+      const paths = tabIssues.map((i) => i.fullPath);
+      const limits = new Map(tabIssues.map((i) => [i.fullPath, i.suggestedLimit]));
+      return addPaginationToFields(q, paths, limits);
+    });
+  }, [applyToAllTabs]);
+
   const handleSplitApply = useCallback(
     (queries: SplitQueryInfo[]) => {
       if (queries.length === 0) return;
@@ -794,6 +844,24 @@ export default function QueryOptimizerPage() {
                 fragmentCount={fragmentCount}
                 issueCount={detectionBadge + analysisBadge}
               />
+              {queryTabs.length > 0 && (
+                <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-blue-500/10 border border-blue-500/20">
+                  <svg className="w-4 h-4 text-blue-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span className="text-xs text-blue-300">
+                    Tip: For best results, apply pagination, system field removal, and fragment extraction to the <strong>Original</strong> query before splitting.
+                  </span>
+                  {activeTabIdx !== 0 && (
+                    <button
+                      onClick={() => handleTabSwitch(0)}
+                      className="shrink-0 px-2.5 py-1 rounded-md bg-blue-500/15 border border-blue-500/25 text-blue-300 text-[11px] font-medium hover:bg-blue-500/25 transition-colors"
+                    >
+                      Switch to Original
+                    </button>
+                  )}
+                </div>
+              )}
               {analysis.isValid && (
                 <QuickActions
                   safeSystemFieldCount={safeSystemFieldNames.length}
@@ -804,6 +872,11 @@ export default function QueryOptimizerPage() {
                   onExtractFragments={() => handleExtractFragments(fragmentSuggestions)}
                   paginationIssueCount={paginationIssues.length}
                   onFixPagination={handleFixAllPagination}
+                  splitMode={queryTabs.length > 0}
+                  onRemoveSystemFieldsAll={handleRemoveSystemFieldsAll}
+                  onFixRichTextAll={handleRemoveRichTextFormatsAll}
+                  onExtractFragmentsAll={handleExtractFragmentsAll}
+                  onFixPaginationAll={handleFixAllPaginationAll}
                 />
               )}
             </div>

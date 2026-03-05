@@ -3,6 +3,7 @@
 import { useCallback, useRef, useEffect } from "react";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import { parse, print } from "graphql";
+import { decodeQueryInput } from "@/lib/decode-input";
 
 export type MonacoEditorInstance = Parameters<OnMount>[0];
 
@@ -22,23 +23,6 @@ interface FragmentLocation {
 const FRAG_DEF_RE = /^(\s*)fragment\s+(\w+)\s+on\s+/;
 const FRAG_SPREAD_RE = /\.\.\.(\w+)/g;
 
-const BASE64_RE = /^[A-Za-z0-9+/\-_=\s]+$/;
-const GQL_TOKEN_RE = /^\s*(query|mutation|subscription|fragment|\{)/;
-
-function tryDecodeBase64(text: string): string | null {
-  const trimmed = text.trim();
-  if (trimmed.length < 20 || !BASE64_RE.test(trimmed)) return null;
-
-  try {
-    const normalised = trimmed.replace(/-/g, "+").replace(/_/g, "/");
-    const decoded = atob(normalised);
-    if (GQL_TOKEN_RE.test(decoded)) return decoded;
-  } catch {
-    // not valid base64
-  }
-  return null;
-}
-
 function beautifyGraphQL(text: string): string | null {
   try {
     return print(parse(text));
@@ -47,8 +31,8 @@ function beautifyGraphQL(text: string): string | null {
   }
 }
 
-function resolveAndBeautify(raw: string): string | null {
-  const decoded = tryDecodeBase64(raw);
+async function resolveAndBeautify(raw: string): Promise<string | null> {
+  const decoded = await decodeQueryInput(raw);
   const source = decoded ?? raw;
   return beautifyGraphQL(source);
 }
@@ -132,10 +116,11 @@ export function QueryEditor({
 
       editor.onDidPaste(() => {
         const currentValue = editor.getValue();
-        const beautified = resolveAndBeautify(currentValue);
-        if (beautified && beautified !== currentValue) {
-          onChange(beautified);
-        }
+        resolveAndBeautify(currentValue).then((beautified) => {
+          if (beautified && beautified !== currentValue) {
+            onChange(beautified);
+          }
+        });
       });
 
       editor.onMouseDown((e) => {
@@ -174,10 +159,11 @@ export function QueryEditor({
   }, [value, updateFragmentDecorations]);
 
   const handleFormat = useCallback(() => {
-    const beautified = resolveAndBeautify(value);
-    if (beautified) {
-      onChange(beautified);
-    }
+    resolveAndBeautify(value).then((beautified) => {
+      if (beautified) {
+        onChange(beautified);
+      }
+    });
   }, [value, onChange]);
 
   return (

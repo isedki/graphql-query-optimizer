@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
-import Editor from "@monaco-editor/react";
+import { useState, useCallback, useRef } from "react";
+import Editor, { type OnMount } from "@monaco-editor/react";
+import { decodeVariablesInput } from "@/lib/decode-input";
 
 interface VariablesEditorProps {
   value: string;
@@ -17,6 +18,28 @@ export function VariablesEditor({
   error,
 }: VariablesEditorProps) {
   const [expanded, setExpanded] = useState(false);
+  const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
+
+  const handleMount: OnMount = useCallback(
+    (editor) => {
+      editorRef.current = editor;
+
+      editor.onDidPaste(() => {
+        const currentValue = editor.getValue();
+        decodeVariablesInput(currentValue).then((decoded) => {
+          if (decoded && decoded !== currentValue) {
+            try {
+              const pretty = JSON.stringify(JSON.parse(decoded), null, 2);
+              onChange(pretty);
+            } catch {
+              onChange(decoded);
+            }
+          }
+        });
+      });
+    },
+    [onChange]
+  );
 
   return (
     <div className="rounded-xl overflow-hidden border border-white/10">
@@ -51,6 +74,7 @@ export function VariablesEditor({
             defaultLanguage="json"
             value={value}
             onChange={(val) => onChange(val || "")}
+            onMount={handleMount}
             theme="vs-dark"
             options={{
               minimap: { enabled: false },
