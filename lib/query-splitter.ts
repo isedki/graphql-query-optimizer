@@ -1,7 +1,7 @@
 import {
   DocumentNode,
   OperationDefinitionNode,
-  FieldNode,
+  FragmentDefinitionNode,
   Kind,
   print,
 } from "graphql";
@@ -40,7 +40,7 @@ export function generateSplitOptions(
     return options;
   }
 
-  const rootSplit = generateRootFieldSplit(operation, tree, originalSize);
+  const rootSplit = generateRootFieldSplit(ast, operation, tree, originalSize);
   if (rootSplit) options.push(rootSplit);
 
   const relSplit = generateRelationshipSplit(ast, tree, originalSize);
@@ -49,7 +49,70 @@ export function generateSplitOptions(
   return options;
 }
 
+function collectFragmentNames(node: QueryTreeNode): Set<string> {
+  const names = new Set<string>();
+  function walk(n: QueryTreeNode) {
+    if (n.nodeKind === "fragmentSpread" && n.fragmentName) {
+      names.add(n.fragmentName);
+    }
+    for (const child of n.children) walk(child);
+  }
+  walk(node);
+  return names;
+}
+
+function resolveTransitiveFragments(
+  names: Set<string>,
+  ast: DocumentNode
+): Set<string> {
+  const fragDefs = new Map<string, FragmentDefinitionNode>();
+  for (const def of ast.definitions) {
+    if (def.kind === Kind.FRAGMENT_DEFINITION) {
+      fragDefs.set(def.name.value, def);
+    }
+  }
+
+  const resolved = new Set(names);
+  const queue: string[] = [];
+  names.forEach((n) => queue.push(n));
+  while (queue.length > 0) {
+    const name = queue.pop()!;
+    const def = fragDefs.get(name);
+    if (!def) continue;
+    const text = print(def);
+    const spreadRe = /\.\.\.([A-Z_a-z]\w*)/g;
+    let match;
+    while ((match = spreadRe.exec(text)) !== null) {
+      if (!resolved.has(match[1]) && fragDefs.has(match[1])) {
+        resolved.add(match[1]);
+        queue.push(match[1]);
+      }
+    }
+  }
+  return resolved;
+}
+
+function appendFragmentDefs(
+  query: string,
+  fragNames: Set<string>,
+  ast: DocumentNode
+): string {
+  if (fragNames.size === 0) return query;
+  const allNames = resolveTransitiveFragments(fragNames, ast);
+  let result = query;
+  for (const def of ast.definitions) {
+    if (
+      def.kind === Kind.FRAGMENT_DEFINITION &&
+      allNames.has(def.name.value)
+    ) {
+      result += "\n\n" + print(def);
+    }
+  }
+  return result;
+}
+
 function generateRootFieldSplit(
+  ast: DocumentNode,
   operation: OperationDefinitionNode,
   tree: QueryTreeNode[],
   originalSize: number
@@ -76,12 +139,14 @@ function generateRootFieldSplit(
     const opName = `get${capitalize(rootNode.name)}`;
     const varDefsStr = varDefs ? `(${varDefs})` : "";
 
-    const query = `${opType} ${opName}${varDefsStr} {\n  ${fieldHeader}${argsStr} {\n${bodyLines}\n  }\n}`;
-    const size = new TextEncoder().encode(query).length;
+    let queryStr = `${opType} ${opName}${varDefsStr} {\n  ${fieldHeader}${argsStr} {\n${bodyLines}\n  }\n}`;
+    const fragNames = collectFragmentNames(rootNode);
+    queryStr = appendFragmentDefs(queryStr, fragNames, ast);
+    const size = new TextEncoder().encode(queryStr).length;
 
     queries.push({
       name: opName,
-      query,
+      query: queryStr,
       size,
       fields: [rootNode.displayName],
     });
@@ -182,7 +247,12 @@ function generateRelationshipSplit(
       `    ${rootHeader}${argsStr} {\n${fieldLines.join("\n")}\n    }`
     );
   }
-  const mainQuery = `${opType} mainQuery${varDefsStr} {\n${mainLines.join("\n")}\n}`;
+  let mainQuery = `${opType} mainQuery${varDefsStr} {\n${mainLines.join("\n")}\n}`;
+  const mainFragNames = new Set<string>();
+  for (const root of tree) {
+    collectFragmentNames(root).forEach((name) => mainFragNames.add(name));
+  }
+  mainQuery = appendFragmentDefs(mainQuery, mainFragNames, ast);
   const mainSize = new TextEncoder().encode(mainQuery).length;
   queries.push({
     name: "mainQuery",
@@ -191,10 +261,11 @@ function generateRelationshipSplit(
     fields: tree.map((r) => r.name),
   });
 
-  // Separate queries for extracted relations
   for (const { child } of deepRelations) {
     const bodyLines = buildFieldBody(child, 2);
-    const relQuery = `${opType} get${capitalize(child.name)}($id: ID!) {\n  ${child.name}(where: { id: $id }) {\n${bodyLines}\n  }\n}`;
+    let relQuery = `${opType} get${capitalize(child.name)}($id: ID!) {\n  ${child.name}(where: { id: $id }) {\n${bodyLines}\n  }\n}`;
+    const relFragNames = collectFragmentNames(child);
+    relQuery = appendFragmentDefs(relQuery, relFragNames, ast);
     const relSize = new TextEncoder().encode(relQuery).length;
     queries.push({
       name: `get${capitalize(child.name)}`,

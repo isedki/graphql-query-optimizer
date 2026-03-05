@@ -67,8 +67,14 @@ function processSelectionSet(
         const node = processFieldNode(field, depth, parentPath, fragmentMap, visited);
         if (node) children.push(node);
       } else {
-        const displayName = field.alias ? field.alias.value : fieldName;
-        scalars.push(displayName);
+        let scalarText = field.alias ? `${field.alias.value}: ${fieldName}` : fieldName;
+        if (field.arguments && field.arguments.length > 0) {
+          const argsStr = field.arguments
+            .map((a) => `${a.name.value}: ${print(a.value)}`)
+            .join(", ");
+          scalarText += `(${argsStr})`;
+        }
+        scalars.push(scalarText);
       }
     } else if (selection.kind === Kind.INLINE_FRAGMENT) {
       const inlineFrag = selection as InlineFragmentNode;
