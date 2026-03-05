@@ -41,6 +41,8 @@ import {
   QueryTreeNode,
 } from "@/lib/query-graph";
 import { generateSplitOptions } from "@/lib/query-splitter";
+import { verifySplitCoverage } from "@/lib/split-verifier";
+import { SplitVerificationPanel } from "@/components/SplitVerificationPanel";
 
 const EXAMPLE_QUERY = `query GetArticles($locale: Locale!, $first: Int) {
   articles(locales: [$locale], first: $first) {
@@ -238,6 +240,16 @@ export default function QueryOptimizerPage() {
     if (!ast) return [];
     return generateSplitOptions(ast, tree, analysis.payload.totalSize);
   }, [ast, tree, analysis.payload.totalSize]);
+
+  const splitVerification = useMemo(() => {
+    if (queryTabs.length < 2) return null;
+    const originalQuery = queryTabs[0].query;
+    const splitQueries = queryTabs.slice(1).map((t) => ({
+      name: t.label,
+      query: t.query,
+    }));
+    return verifySplitCoverage(originalQuery, splitQueries);
+  }, [queryTabs]);
 
   const regeneratedQuery = useMemo(() => {
     if (!initialized || !ast || tree.length === 0) return null;
@@ -596,6 +608,13 @@ export default function QueryOptimizerPage() {
                   &times; Close
                 </button>
               </div>
+            )}
+            {queryTabs.length > 0 && (
+              <SplitVerificationPanel
+                verification={splitVerification}
+                queryTabs={queryTabs}
+                variables={variables}
+              />
             )}
             <QueryEditor value={query} onChange={setQuery} height="420px" onEditorMount={handleEditorMount} />
             <VariablesEditor
