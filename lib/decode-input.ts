@@ -11,8 +11,20 @@ const BASE64_RE = /^[A-Za-z0-9+/\-_=\s]+$/;
 const GQL_TOKEN_RE = /^\s*(query|mutation|subscription|fragment|\{)/;
 const JSON_TOKEN_RE = /^\s*[\[{]/;
 
+function stripWrapper(text: string): string {
+  let s = text.trim();
+  if (
+    (s.startsWith('"') && s.endsWith('"')) ||
+    (s.startsWith("'") && s.endsWith("'")) ||
+    (s.startsWith("`") && s.endsWith("`"))
+  ) {
+    s = s.slice(1, -1).trim();
+  }
+  return s;
+}
+
 function normaliseBase64(raw: string): string {
-  let b64 = raw.trim().replace(/\s+/g, "");
+  let b64 = stripWrapper(raw).replace(/\s+/g, "");
   b64 = b64.replace(/-/g, "+").replace(/_/g, "/");
   const pad = b64.length % 4;
   if (pad === 2) b64 += "==";
@@ -38,7 +50,7 @@ function bytesToString(bytes: Uint8Array): string {
  * Returns the decoded text if it looks like a GraphQL document, or null.
  */
 export async function decodeQueryInput(raw: string): Promise<string | null> {
-  const trimmed = raw.trim();
+  const trimmed = stripWrapper(raw);
   if (trimmed.length < 20 || !BASE64_RE.test(trimmed)) return null;
 
   let bytes: Uint8Array;
@@ -75,7 +87,7 @@ export async function decodeQueryInput(raw: string): Promise<string | null> {
 export async function decodeVariablesInput(
   raw: string
 ): Promise<string | null> {
-  const trimmed = raw.trim();
+  const trimmed = stripWrapper(raw);
   if (trimmed.length < 4 || !BASE64_RE.test(trimmed)) return null;
 
   let bytes: Uint8Array;
