@@ -40,6 +40,8 @@ export function generateSplitOptions(
   if (!operation || tree.length < 2) {
     const relSplit = generateRelationshipSplit(ast, tree, originalSize);
     if (relSplit) options.push(relSplit);
+    const unionSplit = generateUnionTypeSplit(ast, tree, originalSize);
+    if (unionSplit) options.push(unionSplit);
     return options;
   }
 
@@ -48,6 +50,9 @@ export function generateSplitOptions(
 
   const relSplit = generateRelationshipSplit(ast, tree, originalSize);
   if (relSplit) options.push(relSplit);
+
+  const unionSplit = generateUnionTypeSplit(ast, tree, originalSize);
+  if (unionSplit) options.push(unionSplit);
 
   return options;
 }
@@ -234,6 +239,7 @@ function generateRelationshipSplit(
   const deepRelations: { root: QueryTreeNode; child: QueryTreeNode }[] = [];
   for (const root of tree) {
     for (const child of root.children) {
+      if (child.nodeKind === "inlineFragment" || child.nodeKind === "fragmentSpread") continue;
       if (child.children.length > 0 || child.scalarFields.length > 3) {
         deepRelations.push({ root, child });
       }
@@ -343,6 +349,147 @@ function generateRelationshipSplit(
     description: `Extracts ${deepRelations.length} deep relation${deepRelations.length > 1 ? "s" : ""} (${deepRelations.map((r) => r.child.name).join(", ")}) into separate queries.`,
     queries,
     totalSize: queries.reduce((s, q) => s + q.size, 0),
+    originalSize,
+    savingsPercentage: Math.max(0, savingsPercentage),
+  };
+}
+
+const UNION_BATCH_SIZE = 5;
+const UNION_BATCH_SIZE_BYTES = 30_000;
+const MIN_INLINE_FRAGMENTS_FOR_SPLIT = 4;
+
+function generateUnionTypeSplit(
+  ast: DocumentNode,
+  tree: QueryTreeNode[],
+  originalSize: number
+): SplitOption | null {
+  const operation = ast.definitions.find(
+    (def): def is OperationDefinitionNode =>
+      def.kind === Kind.OPERATION_DEFINITION
+  );
+  if (!operation) return null;
+
+  const candidates: { root: QueryTreeNode; inlineChildren: QueryTreeNode[] }[] = [];
+  for (const root of tree) {
+    const inlineChildren = root.children.filter(
+      (c) => c.nodeKind === "inlineFragment"
+    );
+    if (inlineChildren.length >= MIN_INLINE_FRAGMENTS_FOR_SPLIT) {
+      candidates.push({ root, inlineChildren });
+    }
+  }
+  if (candidates.length === 0) return null;
+
+  const opType = operation.operation;
+  const opName = operation.name?.value || "Query";
+  const varDefs = operation.variableDefinitions
+    ? operation.variableDefinitions
+        .map((v) => `$${v.variable.name.value}: ${print(v.type)}`)
+        .join(", ")
+    : "";
+  const varDefsStr = varDefs ? `(${varDefs})` : "";
+
+  const queries: SplitQuery[] = [];
+  let batchIdx = 1;
+
+  for (const { root, inlineChildren } of candidates) {
+    const rootHeader = root.alias ? `${root.alias}: ${root.name}` : root.name;
+    const argsStr =
+      root.arguments.length > 0
+        ? `(${root.arguments.map((a) => `${a.name}: ${a.value}`).join(", ")})`
+        : "";
+
+    const nonInlineChildren = root.children.filter(
+      (c) => c.nodeKind !== "inlineFragment"
+    );
+
+    const batches: QueryTreeNode[][] = [];
+    let currentBatch: QueryTreeNode[] = [];
+    let currentBatchSize = 0;
+
+    for (const child of inlineChildren) {
+      if (
+        currentBatch.length >= UNION_BATCH_SIZE ||
+        (currentBatch.length > 0 && currentBatchSize + child.estimatedSize > UNION_BATCH_SIZE_BYTES)
+      ) {
+        batches.push(currentBatch);
+        currentBatch = [];
+        currentBatchSize = 0;
+      }
+      currentBatch.push(child);
+      currentBatchSize += child.estimatedSize;
+    }
+    if (currentBatch.length > 0) batches.push(currentBatch);
+
+    for (const batch of batches) {
+      const fieldLines: string[] = [];
+
+      for (const scalar of root.scalarFields) {
+        fieldLines.push(`      ${scalar}`);
+      }
+
+      for (const child of nonInlineChildren) {
+        if (child.nodeKind === "fragmentSpread" && child.fragmentName) {
+          fieldLines.push(`      ...${child.fragmentName}`);
+        } else {
+          const childHeader = child.alias ? `${child.alias}: ${child.name}` : child.name;
+          const childArgs =
+            child.arguments.length > 0
+              ? `(${child.arguments.map((a) => `${a.name}: ${a.value}`).join(", ")})`
+              : "";
+          fieldLines.push(`      ${childHeader}${childArgs} {`);
+          fieldLines.push(buildFieldBody(child, 4));
+          fieldLines.push(`      }`);
+        }
+      }
+
+      for (const child of batch) {
+        fieldLines.push(`      ... on ${child.typeName || child.name} {`);
+        fieldLines.push(buildFieldBody(child, 4));
+        fieldLines.push(`        __typename`);
+        fieldLines.push(`      }`);
+      }
+
+      fieldLines.push(`      __typename`);
+
+      const batchName = `${opName}_batch${batchIdx}`;
+      let queryStr = `${opType} ${batchName}${varDefsStr} {\n    ${rootHeader}${argsStr} {\n${fieldLines.join("\n")}\n    }\n}`;
+
+      const fragNames = new Set<string>();
+      for (const child of batch) {
+        collectFragmentNames(child).forEach((n) => fragNames.add(n));
+      }
+      for (const child of nonInlineChildren) {
+        collectFragmentNames(child).forEach((n) => fragNames.add(n));
+      }
+      queryStr = appendFragmentDefs(queryStr, fragNames, ast);
+      const size = new TextEncoder().encode(queryStr).length;
+
+      queries.push({
+        name: batchName,
+        query: queryStr,
+        size,
+        fields: batch.map((c) => c.typeName || c.name),
+      });
+
+      batchIdx++;
+    }
+  }
+
+  if (queries.length < 2) return null;
+
+  const totalSize = queries.reduce((sum, q) => sum + q.size, 0);
+  const maxSingle = Math.max(...queries.map((q) => q.size));
+  const savingsPercentage = Math.round(
+    ((originalSize - maxSingle) / originalSize) * 100
+  );
+
+  return {
+    id: "split-union-types",
+    name: "Split by Union Types",
+    description: `Splits ${candidates.reduce((s, c) => s + c.inlineChildren.length, 0)} union type branches into ${queries.length} batched queries, each using the same root field.`,
+    queries,
+    totalSize,
     originalSize,
     savingsPercentage: Math.max(0, savingsPercentage),
   };
